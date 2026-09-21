@@ -1,0 +1,6 @@
+# Для базового ядра (fetcher, diff_engine, database) достаточно стандартной библиотеки Python 3.8+!
+# Для запуска REST API и шедулера фонового опроса:
+fastapi>=0.110.0
+uvicorn>=0.28.0
+apscheduler>=3.10.4
+pydantic>=2.6.0

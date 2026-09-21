@@ -1,0 +1,54 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+downloads/
+eggs/
+.eggs/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Environments
+.env
+.venv/
+env/
+venv/
+ENV/
+
+# Databases & local data
+*.sqlite
+*.sqlite3
+*.db
+*.log
+local_cache/
+sample_rasp.json
+
+# IDEs & Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Flutter / Dart (для мобильного приложения)
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+.pub-cache/
+.pub/
+*.apk
+
+# OS generated files
+Thumbs.db
+Desktop.ini
+.DS_Store
