@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
-import '../models/lesson.dart';
 import '../services/api_service.dart';
 import '../widgets/lesson_card.dart';
 import 'login_screen.dart';
@@ -19,7 +18,6 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
   final ScrollController _dayScrollController = ScrollController();
 
   bool _isLoading = true;
-  bool _isSimulationMode = false;
   String? _errorMessage;
   ScheduleResponse? _scheduleData;
 
@@ -78,7 +76,6 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
   Future<void> _loadSchedule({bool forceRefresh = false}) async {
     setState(() {
       _isLoading = true;
-      _isSimulationMode = false;
       _errorMessage = null;
     });
 
@@ -94,98 +91,6 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
         _isLoading = false;
       });
     }
-  }
-
-  void _toggleSimulation() {
-    if (_scheduleData == null) return;
-
-    if (_isSimulationMode) {
-      _loadSchedule(forceRefresh: true);
-      return;
-    }
-
-    setState(() {
-      _isSimulationMode = true;
-      final targetDate = _selectedDate;
-      final targetLessons = _scheduleData!.lessons.where((l) => l.rawDate.startsWith(targetDate)).toList();
-
-      if (targetLessons.isNotEmpty) {
-        // Перенос аудитории для первой пары
-        targetLessons[0].isRoomChanged = true;
-        targetLessons[0].oldRoom = targetLessons[0].room;
-        targetLessons[0].room = '8-402';
-        targetLessons[0].changeNote = 'Аудитория перенесена: 2-805 ➔ 8-402';
-
-        if (targetLessons.length > 1) {
-          // Отмена для второй пары
-          targetLessons[1].isCancelled = true;
-          targetLessons[1].changeNote = 'Пара отменена преподавателем (была в ауд. 1-374)';
-        }
-      } else {
-        // Если на этот день не было пар, добавим тестовые пары прямо на выбранную дату
-        _scheduleData!.lessons.addAll([
-          Lesson(
-            id: 999901,
-            subject: 'Программирование мобильных игр',
-            rawSubject: 'Программирование мобильных игр',
-            teacher: 'Егжов Лев Дмитриевич',
-            room: '8-402',
-            lessonNum: 5,
-            startTime: '15:55',
-            endTime: '17:30',
-            rawDate: '${targetDate}T15:55:00',
-            dayOfWeek: 2,
-            lessonType: 'Практика',
-            theme: 'Работа с проектами',
-            isRoomChanged: true,
-            oldRoom: '2-805',
-            changeNote: 'Аудитория перенесена: 2-805 ➔ 8-402',
-          ),
-          Lesson(
-            id: 999902,
-            subject: 'Экономика компьютерных игр',
-            rawSubject: 'Экономика компьютерных игр',
-            teacher: 'Шашло Нина Владимировна',
-            room: '1-374',
-            lessonNum: 6,
-            startTime: '17:40',
-            endTime: '19:15',
-            rawDate: '${targetDate}T17:40:00',
-            dayOfWeek: 2,
-            lessonType: 'Практика',
-            theme: 'Современное состояние глобального рынка',
-            isCancelled: true,
-            changeNote: 'Пара отменена преподавателем',
-          ),
-          Lesson(
-            id: 999903,
-            subject: 'Программирование мобильных игр',
-            rawSubject: 'Программирование мобильных игр',
-            teacher: 'Глушенко Сергей Андреевич',
-            room: '2-305',
-            lessonNum: 7,
-            startTime: '19:25',
-            endTime: '21:00',
-            rawDate: '${targetDate}T19:25:00',
-            dayOfWeek: 2,
-            lessonType: 'Лекция',
-            theme: 'Лекция 1. Модульная разработка в Unity',
-          ),
-        ]);
-      }
-    });
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: const Text('🧪 Симуляция включена: перенос аудитории и отмена пары'),
-        backgroundColor: Colors.amber.shade900,
-        action: SnackBarAction(
-          label: 'Сбросить',
-          textColor: Colors.white,
-          onPressed: _toggleSimulation,
-        ),
-      ),
-    );
   }
 
   Future<void> _handleSwitchStudent() async {
@@ -238,21 +143,16 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                     width: 8,
                     height: 8,
                     decoration: BoxDecoration(
-                      color: _isSimulationMode
-                          ? Colors.purpleAccent
-                          : (_scheduleData!.isFromCache ? Colors.amber : Colors.green),
+                      color: _scheduleData!.isFromCache ? Colors.amber : Colors.green,
                       shape: BoxShape.circle,
                     ),
                   ),
                   const SizedBox(width: 6),
                   Text(
-                    _isSimulationMode
-                        ? 'Симуляция'
-                        : (_scheduleData!.isFromCache ? 'Кэш (офлайн)' : 'Актуально'),
+                    _scheduleData!.isFromCache ? 'Кэш (офлайн)' : 'Актуально',
                     style: TextStyle(
                       fontSize: 12,
-                      color: _isSimulationMode ? Colors.purpleAccent : theme.colorScheme.onSurfaceVariant,
-                      fontWeight: _isSimulationMode ? FontWeight.bold : FontWeight.normal,
+                      color: theme.colorScheme.onSurfaceVariant,
                     ),
                   ),
                 ],
@@ -269,27 +169,11 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
             icon: const Icon(Icons.more_vert),
             tooltip: 'Опции',
             onSelected: (value) {
-              if (value == 'toggle_simulation') {
-                _toggleSimulation();
-              } else if (value == 'switch_student') {
+              if (value == 'switch_student') {
                 _handleSwitchStudent();
               }
             },
             itemBuilder: (context) => [
-              PopupMenuItem(
-                value: 'toggle_simulation',
-                child: Row(
-                  children: [
-                    Icon(
-                      _isSimulationMode ? Icons.restore_rounded : Icons.science_rounded,
-                      size: 20,
-                      color: _isSimulationMode ? Colors.redAccent : Colors.amber.shade800,
-                    ),
-                    const SizedBox(width: 10),
-                    Text(_isSimulationMode ? 'Сбросить симуляцию' : 'Симулировать изменения'),
-                  ],
-                ),
-              ),
               PopupMenuItem(
                 value: 'switch_student',
                 child: Row(
@@ -375,34 +259,6 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                   ),
                 ),
               ],
-            ),
-          ),
-
-        // Баннер активного режима симуляции
-        if (_isSimulationMode)
-          InkWell(
-            onTap: _toggleSimulation,
-            child: Container(
-              width: double.infinity,
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              color: Colors.purple.shade50,
-              child: Row(
-                children: [
-                  Icon(Icons.science_rounded, color: Colors.purple.shade700, size: 20),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      'Тест: симулирован перенос аудитории (5 пара) и отмена (6 пара). Нажмите для сброса.',
-                      style: TextStyle(
-                        color: Colors.purple.shade900,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                  ),
-                  Icon(Icons.close, color: Colors.purple.shade700, size: 18),
-                ],
-              ),
             ),
           ),
 
