@@ -18,13 +18,13 @@ class LessonCard extends StatelessWidget {
         return Colors.teal.shade600;
       case 'Военная подготовка':
         return Colors.green.shade700;
-      case 'Проект':
+      case 'Защита':
         return Colors.purple.shade600;
       case 'Зачет':
       case 'Экзамен':
         return Colors.red.shade600;
       default:
-        return Colors.blueGrey.shade600;
+        return Colors.indigo.shade600;
     }
   }
 
@@ -220,6 +220,21 @@ class LessonCard extends StatelessWidget {
                       fontSize: 12,
                       decoration: isCancelled ? TextDecoration.lineThrough : null,
                       color: theme.textTheme.bodySmall?.color?.withValues(alpha: 0.8),
+                    ),
+                  ),
+
+                // Тема занятия (если указана в расписании)
+                if (lesson.theme != null && lesson.theme!.isNotEmpty && !isCancelled)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: Text(
+                      '📖 ${lesson.theme!}',
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: theme.textTheme.bodySmall?.color?.withValues(alpha: 0.75),
+                      ),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
                     ),
                   ),
 

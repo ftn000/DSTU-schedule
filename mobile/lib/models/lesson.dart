@@ -12,6 +12,7 @@ class Lesson {
   final String? group;
   final String lessonType;
   final String? academicYear;
+  final String? theme;
 
   // Динамические статусы изменений из Diff Engine
   bool isCancelled;
@@ -36,6 +37,7 @@ class Lesson {
     required this.lessonType,
     this.group,
     this.academicYear,
+    this.theme,
     this.isCancelled = false,
     this.isRoomChanged = false,
     this.isTeacherChanged = false,
@@ -45,55 +47,75 @@ class Lesson {
     this.changeNote,
   });
 
-  static final _typeRegex = RegExp(
+  static final _typePrefixRegex = RegExp(
     r'^(лек|пр|лаб|сем|зач|экз|конс|кп|кр)[\.\s]+(.*)', 
     caseSensitive: false
   );
 
-  factory Lesson.fromJson(Map<String, dynamic> json) {
-    final originalSubject = (json['дисциплина'] as String? ?? 'Занятие').trim();
-    String detectedType = 'Занятие';
-    String cleanSubject = originalSubject;
+  static String detectLessonType(String originalSubject, String? theme) {
+    final s = originalSubject.trim();
+    final t = (theme ?? '').trim().toLowerCase();
+    final sLower = s.toLowerCase();
 
-    // Извлечение типа занятия из префикса названия (лек, пр, лаб и т.д.)
-    final match = _typeRegex.firstMatch(originalSubject);
+    // 1. Проверяем префикс в самом названии предмета (лек, пр, лаб и т.д.)
+    final match = _typePrefixRegex.firstMatch(s);
     if (match != null) {
       final prefix = match.group(1)!.toLowerCase();
-      cleanSubject = match.group(2)!.trim();
       switch (prefix) {
-        case 'лек':
-          detectedType = 'Лекция';
-          break;
-        case 'пр':
-          detectedType = 'Практика';
-          break;
-        case 'лаб':
-          detectedType = 'Лабораторная';
-          break;
-        case 'сем':
-          detectedType = 'Семинар';
-          break;
-        case 'зач':
-          detectedType = 'Зачет';
-          break;
-        case 'экз':
-          detectedType = 'Экзамен';
-          break;
-        case 'конс':
-          detectedType = 'Консультация';
-          break;
-        default:
-          detectedType = 'Занятие';
+        case 'лек': return 'Лекция';
+        case 'пр': return 'Практика';
+        case 'лаб': return 'Лабораторная';
+        case 'сем': return 'Семинар';
+        case 'зач': return 'Зачет';
+        case 'экз': return 'Экзамен';
+        case 'конс': return 'Консультация';
       }
-    } else {
-      final lower = originalSubject.toLowerCase();
-      if (lower.contains('военная кафедра') || lower.contains('кдв')) {
-        detectedType = 'Военная подготовка';
-      } else if (lower.contains('проект')) {
-        detectedType = 'Проект';
-      } else if (lower.contains('стартап')) {
-        detectedType = 'Семинар';
-      }
+    }
+
+    // 2. В ДГТУ на старших курсах тип занятия указывается в поле 'тема' (theme)
+    if (t.contains('лекция') || t.contains('лекц') || t.contains('лек.')) {
+      return 'Лекция';
+    }
+    if (t.contains('практика') || 
+        t.contains('практ') || 
+        t.contains('семинар') || 
+        t.contains('кейс') || 
+        t.contains('проект') || 
+        t.contains('лаборатор') || 
+        t.contains('воркшоп') || 
+        t.contains('дизайн') || 
+        t.contains('разработка') || 
+        t.contains('работа над') ||
+        t.contains('работа с')) {
+      return 'Практика';
+    }
+    if (t.contains('зачет')) return 'Зачет';
+    if (t.contains('экзамен')) return 'Экзамен';
+    if (t.contains('защита')) return 'Защита';
+
+    // 3. Эвристика по названию дисциплины
+    if (sLower.contains('проект') || sLower.contains('разработка') || sLower.contains('документация')) {
+      return 'Практика';
+    }
+    if (sLower.contains('экономика') || sLower.contains('стартап') || sLower.contains('маркетинг') || sLower.contains('менеджмент')) {
+      return 'Лекция';
+    }
+
+    return 'Практика';
+  }
+
+  factory Lesson.fromJson(Map<String, dynamic> json) {
+    final originalSubject = (json['дисциплина'] as String? ?? 'Занятие').trim();
+    final rawTheme = json['тема'] as String?;
+    final cleanTheme = (rawTheme != null && rawTheme.trim().isNotEmpty) ? rawTheme.trim() : null;
+
+    final detectedType = detectLessonType(originalSubject, cleanTheme);
+
+    // Очищаем название предмета от префиксов вроде "лек ", "пр "
+    String cleanSubject = originalSubject;
+    final match = _typePrefixRegex.firstMatch(originalSubject);
+    if (match != null) {
+      cleanSubject = match.group(2)!.trim();
     }
 
     return Lesson(
@@ -111,6 +133,7 @@ class Lesson {
       lessonType: detectedType,
       group: json['группа'] as String?,
       academicYear: json['учебныйГод'] as String?,
+      theme: cleanTheme,
     );
   }
 
@@ -132,6 +155,7 @@ class Lesson {
       'дата': rawDate,
       'деньНедели': dayOfWeek,
       'типЗанятия': lessonType,
+      'тема': theme,
       'isCancelled': isCancelled,
       'isRoomChanged': isRoomChanged,
       'changeNote': changeNote,
