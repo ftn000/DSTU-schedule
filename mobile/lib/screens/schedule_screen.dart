@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../services/api_service.dart';
 import '../widgets/lesson_card.dart';
+import 'login_screen.dart';
 
 class ScheduleScreen extends StatefulWidget {
   final int studentId;
@@ -92,6 +93,36 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
     }
   }
 
+  Future<void> _handleSwitchStudent() async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Сменить студента'),
+        content: Text(
+          'Текущий подключенный ID: ${widget.studentId}.\nВы хотите ввести другой ID студента?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Отмена'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Сменить'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm == true && mounted) {
+      await _apiService.clearSavedStudentId();
+      if (!mounted) return;
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(builder: (_) => const LoginScreen()),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -118,10 +149,10 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                   ),
                   const SizedBox(width: 6),
                   Text(
-                    _scheduleData!.isFromCache ? 'Офлайн-копия' : 'Актуально',
+                    _scheduleData!.isFromCache ? 'Кэш (офлайн)' : 'Актуально',
                     style: TextStyle(
                       fontSize: 12,
-                      color: theme.textTheme.bodySmall?.color,
+                      color: theme.colorScheme.onSurfaceVariant,
                     ),
                   ),
                 ],
@@ -133,6 +164,27 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
             icon: const Icon(Icons.refresh),
             tooltip: 'Обновить',
             onPressed: () => _loadSchedule(forceRefresh: true),
+          ),
+          PopupMenuButton<String>(
+            icon: const Icon(Icons.more_vert),
+            tooltip: 'Опции',
+            onSelected: (value) {
+              if (value == 'switch_student') {
+                _handleSwitchStudent();
+              }
+            },
+            itemBuilder: (context) => [
+              PopupMenuItem(
+                value: 'switch_student',
+                child: Row(
+                  children: [
+                    Icon(Icons.swap_horiz_rounded, size: 20, color: theme.colorScheme.primary),
+                    const SizedBox(width: 10),
+                    const Text('Сменить ID студента'),
+                  ],
+                ),
+              ),
+            ],
           ),
         ],
       ),

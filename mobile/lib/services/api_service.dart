@@ -20,32 +20,58 @@ class ScheduleResponse {
 }
 
 class ApiService {
-  // Для Android эмулятора используйте http://10.0.2.2:8000
-  // Для Windows / Web / iOS симулятора: http://127.0.0.1:8000
   static const String baseUrl = 'http://127.0.0.1:8000';
-  static const String cacheKey = 'cached_schedule_json';
+  static const String _savedIdKey = 'saved_student_id';
+
+  static String _getCacheKey(int studentId) => 'cached_schedule_json_$studentId';
+
+  // --- Методы управления авторизацией / сохраненным студентом ---
+
+  Future<int?> getSavedStudentId() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getInt(_savedIdKey);
+  }
+
+  Future<void> saveStudentId(int studentId) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(_savedIdKey, studentId);
+  }
+
+  Future<void> clearSavedStudentId() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_savedIdKey);
+  }
+
+  /// Проверяет существование студента в ДГТУ и возвращает название группы
+  Future<String> verifyStudentId(int studentId) async {
+    final res = await getSchedule(studentId, forceRefresh: true);
+    if (res.lessons.isEmpty && (res.groupName.isEmpty || res.groupName == 'Группа')) {
+      throw Exception('Расписание для студента с ID $studentId не найдено в базе ДГТУ');
+    }
+    return res.groupName;
+  }
+
+  // --- Загрузка расписания ---
 
   Future<ScheduleResponse> getSchedule(int studentId, {bool forceRefresh = false}) async {
     final prefs = await SharedPreferences.getInstance();
+    final cacheKey = _getCacheKey(studentId);
 
-    // 1. Попытка запросить наш бэкенд
+    // 1. Попытка запросить наш бэкенд (если запущен)
     try {
       final url = Uri.parse('$baseUrl/api/schedule/$studentId?force_refresh=$forceRefresh');
-      final response = await http.get(url).timeout(const Duration(seconds: 8));
+      final response = await http.get(url).timeout(const Duration(seconds: 4));
 
       if (response.statusCode == 200) {
         final decoded = json.decode(utf8.decode(response.bodyBytes));
-        
-        // Кэшируем успешный ответ на устройстве
         await prefs.setString(cacheKey, response.body);
-
         return _parseSchedulePayload(decoded, isFromCache: decoded['source'] == 'cache');
       }
     } catch (_) {
-      // Ошибка сети или бэкенд выключен
+      // Ошибка сети или бэкенд на ПК выключен
     }
 
-    // 2. Если локальный бэкенд недоступен (например, на реальном телефоне в мобильной сети),
+    // 2. Если локальный бэкенд недоступен (на реальном телефоне вне дома),
     // обращаемся напрямую к официальному API ДГТУ
     try {
       final directUrl = Uri.parse('https://edu.donstu.ru/api/Rasp?idStudent=$studentId');
@@ -53,17 +79,25 @@ class ApiService {
 
       if (directResponse.statusCode == 200) {
         final decoded = json.decode(utf8.decode(directResponse.bodyBytes));
+        
+        // Проверка: вернул ли ДГТУ ошибку
+        if (decoded is Map<String, dynamic> && decoded['state'] == -1) {
+          throw Exception(decoded['msg'] ?? 'Студент не найден');
+        }
+
         await prefs.setString(cacheKey, directResponse.body);
         return _parseSchedulePayload(
           decoded, 
           isFromCache: false,
         );
       }
-    } catch (_) {
-      // И сайт ДГТУ тоже не ответил
+    } catch (e) {
+      if (e is Exception && e.toString().contains('не найден')) {
+        rethrow;
+      }
     }
 
-    // 3. Offline-First: если сеть не ответила, читаем локальный кэш с диска телефона
+    // 3. Offline-First: если сети нет, читаем локальный кэш с диска телефона
     final localJson = prefs.getString(cacheKey);
     if (localJson != null) {
       final decoded = json.decode(localJson);
@@ -74,7 +108,7 @@ class ApiService {
       );
     }
 
-    throw Exception('Не удалось загрузить расписание. Проверьте интернет.');
+    throw Exception('Не удалось загрузить расписание. Проверьте интернет или правильность ID студента.');
   }
 
   ScheduleResponse _parseSchedulePayload(Map<String, dynamic> payload, {bool isFromCache = false, String? fallbackWarning}) {
@@ -102,6 +136,7 @@ class ApiService {
       }
     }
 
+    // Парсим занятия и фильтруем военную кафедру
     final lessons = rawLessons
         .map((item) => Lesson.fromJson(item as Map<String, dynamic>))
         .where((lesson) => !lesson.isMilitaryTraining)

@@ -1,10 +1,15 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
+import 'services/api_service.dart';
 import 'screens/schedule_screen.dart';
+import 'screens/login_screen.dart';
 
-void main() {
+void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  runApp(const DstuScheduleApp());
+  final apiService = ApiService();
+  final savedId = await apiService.getSavedStudentId();
+
+  runApp(DstuScheduleApp(initialStudentId: savedId));
 }
 
 /// Позволяет плавно листать списки мышью на Windows и в браузере (drag to scroll)
@@ -20,7 +25,9 @@ class AppScrollBehavior extends MaterialScrollBehavior {
 }
 
 class DstuScheduleApp extends StatelessWidget {
-  const DstuScheduleApp({super.key});
+  final int? initialStudentId;
+
+  const DstuScheduleApp({super.key, this.initialStudentId});
 
   @override
   Widget build(BuildContext context) {
@@ -51,7 +58,9 @@ class DstuScheduleApp extends StatelessWidget {
         ),
       ),
       themeMode: ThemeMode.system,
-      home: const ScheduleScreen(studentId: 347338),
+      home: initialStudentId != null
+          ? ScheduleScreen(studentId: initialStudentId!)
+          : const LoginScreen(),
     );
   }
 }
