@@ -563,7 +563,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
             children: [
               Expanded(
                 child: InkWell(
-                  onTap: () => setState(() => _selectedWeekIndex = 0),
+                  onTap: _goToPreviousWeek,
                   borderRadius: BorderRadius.circular(12),
                   child: AnimatedContainer(
                     duration: const Duration(milliseconds: 200),
@@ -609,7 +609,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
               const SizedBox(width: 8),
               Expanded(
                 child: InkWell(
-                  onTap: () => setState(() => _selectedWeekIndex = 1),
+                  onTap: _goToNextWeek,
                   borderRadius: BorderRadius.circular(12),
                   child: AnimatedContainer(
                     duration: const Duration(milliseconds: 200),
@@ -656,36 +656,29 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
           ),
         ),
 
-        // Список всех дней недели с поддержкой свайпов
+        // Календарная сетка: дни недели слева направо в горизонтальном скролле
         Expanded(
-          child: GestureDetector(
-            behavior: HitTestBehavior.translucent,
-            onHorizontalDragEnd: (details) {
-              if (details.primaryVelocity == null) return;
-              if (details.primaryVelocity! < -180) {
-                // Свайп влево -> следующая неделя
-                _goToNextWeek();
-              } else if (details.primaryVelocity! > 180) {
-                // Свайп вправо -> предыдущая неделя
-                _goToPreviousWeek();
-              }
-            },
-            child: RefreshIndicator(
-              onRefresh: () => _loadSchedule(forceRefresh: true),
-              child: ListView.builder(
-                padding: const EdgeInsets.symmetric(vertical: 8),
-                itemCount: weekDays.length,
-                itemBuilder: (context, index) {
-                  final dt = weekDays[index];
-                  final dateStr = DateFormat('yyyy-MM-dd').format(dt);
-                  final isToday = dateStr == _todayDateStr;
-                  final dayLessons = _scheduleData?.lessons.where((l) {
-                    return l.rawDate.startsWith(dateStr);
-                  }).toList() ?? [];
-                  dayLessons.sort((a, b) => a.lessonNum.compareTo(b.lessonNum));
+          child: RefreshIndicator(
+            onRefresh: () => _loadSchedule(forceRefresh: true),
+            child: SingleChildScrollView(
+              physics: const AlwaysScrollableScrollPhysics(),
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                physics: const BouncingScrollPhysics(),
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 12),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: weekDays.map((dt) {
+                    final dateStr = DateFormat('yyyy-MM-dd').format(dt);
+                    final isToday = dateStr == _todayDateStr;
+                    final dayLessons = _scheduleData?.lessons.where((l) {
+                      return l.rawDate.startsWith(dateStr);
+                    }).toList() ?? [];
+                    dayLessons.sort((a, b) => a.lessonNum.compareTo(b.lessonNum));
 
-                  return _buildWeeklyDaySection(theme, dt, dateStr, isToday, dayLessons);
-                },
+                    return _buildCalendarDayColumn(theme, dt, dateStr, isToday, dayLessons);
+                  }).toList(),
+                ),
               ),
             ),
           ),
@@ -694,117 +687,364 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
     );
   }
 
-  Widget _buildWeeklyDaySection(
+  Widget _buildCalendarDayColumn(
     ThemeData theme,
     DateTime dt,
     String dateStr,
     bool isToday,
     List<Lesson> dayLessons,
   ) {
-    final weekdayFull = _weekdaysFullRu[dt.weekday - 1];
-    final monthGen = _monthsGenitiveRu[dt.month - 1];
+    final weekday = _weekdaysRu[dt.weekday - 1];
+    final month = _monthsRu[dt.month - 1];
+    final isSunday = dt.weekday == DateTime.sunday;
 
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
+    return Container(
+      width: 120,
+      margin: const EdgeInsets.symmetric(horizontal: 4),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          // Заголовок дня (при нажатии переходит в подробный дневной режим)
+          // Заголовок дня недели
           InkWell(
             onTap: () => _switchToDayFromWeek(dt),
-            borderRadius: BorderRadius.circular(8),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              child: Row(
+            borderRadius: BorderRadius.circular(12),
+            child: Container(
+              padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 6),
+              decoration: BoxDecoration(
+                color: isToday
+                    ? theme.colorScheme.primary
+                    : theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.35),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: isToday
+                      ? theme.colorScheme.primary
+                      : theme.dividerColor.withValues(alpha: 0.15),
+                  width: isToday ? 1.5 : 1.0,
+                ),
+                boxShadow: isToday
+                    ? [
+                        BoxShadow(
+                          color: theme.colorScheme.primary.withValues(alpha: 0.25),
+                          blurRadius: 6,
+                          offset: const Offset(0, 2),
+                        ),
+                      ]
+                    : null,
+              ),
+              child: Column(
                 children: [
-                  Container(
-                    width: 4,
-                    height: 18,
-                    decoration: BoxDecoration(
-                      color: isToday
-                          ? theme.colorScheme.primary
-                          : theme.colorScheme.primary.withValues(alpha: 0.35),
-                      borderRadius: BorderRadius.circular(2),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Text(
-                    '$weekdayFull, ${dt.day} $monthGen',
-                    style: TextStyle(
-                      fontSize: 15,
-                      fontWeight: isToday ? FontWeight.bold : FontWeight.w600,
-                      color: isToday
-                          ? theme.colorScheme.primary
-                          : theme.textTheme.titleMedium?.color,
-                    ),
-                  ),
-                  if (isToday) ...[
-                    const SizedBox(width: 8),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                      decoration: BoxDecoration(
-                        color: theme.colorScheme.primary,
-                        borderRadius: BorderRadius.circular(6),
-                      ),
-                      child: const Text(
-                        'СЕГОДНЯ',
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Text(
+                        weekday,
                         style: TextStyle(
-                          fontSize: 10,
+                          fontSize: 13,
                           fontWeight: FontWeight.bold,
-                          color: Colors.white,
+                          color: isToday
+                              ? Colors.white
+                              : (isSunday ? Colors.redAccent : theme.textTheme.bodyMedium?.color),
                         ),
                       ),
+                      if (isToday) ...[
+                        const SizedBox(width: 4),
+                        Container(
+                          width: 6,
+                          height: 6,
+                          decoration: const BoxDecoration(
+                            color: Colors.amberAccent,
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    '${dt.day} $month',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: isToday ? FontWeight.w600 : FontWeight.normal,
+                      color: isToday
+                          ? Colors.white.withValues(alpha: 0.9)
+                          : theme.textTheme.bodySmall?.color,
                     ),
-                  ],
-                  const Spacer(),
-                  Icon(
-                    Icons.arrow_forward_ios_rounded,
-                    size: 13,
-                    color: theme.disabledColor,
                   ),
                 ],
               ),
             ),
           ),
 
-          // Карточки пар или плашка "Пар нет"
+          const SizedBox(height: 8),
+
+          // Список пар на этот день
           if (dayLessons.isNotEmpty)
-            ...dayLessons.map((lesson) => LessonCard(lesson: lesson))
+            ...dayLessons.map(
+              (lesson) => _buildCalendarCompactLessonCard(theme, lesson, dt),
+            )
           else
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                decoration: BoxDecoration(
-                  color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.2),
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(
-                    color: theme.dividerColor.withValues(alpha: 0.1),
+            Container(
+              margin: const EdgeInsets.symmetric(vertical: 4),
+              padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 6),
+              decoration: BoxDecoration(
+                color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.15),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(
+                  color: theme.dividerColor.withValues(alpha: 0.08),
+                ),
+              ),
+              child: Column(
+                children: [
+                  Icon(
+                    isSunday ? Icons.wb_sunny_outlined : Icons.event_available_outlined,
+                    size: 20,
+                    color: theme.disabledColor.withValues(alpha: 0.5),
                   ),
-                ),
-                child: Row(
-                  children: [
-                    Icon(
-                      dt.weekday == DateTime.sunday
-                          ? Icons.wb_sunny_outlined
-                          : Icons.event_available_outlined,
-                      size: 18,
-                      color: theme.disabledColor,
+                  const SizedBox(height: 6),
+                  Text(
+                    isSunday ? 'Выходной' : 'Пар нет',
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: theme.textTheme.bodySmall?.color?.withValues(alpha: 0.7),
                     ),
-                    const SizedBox(width: 10),
-                    Text(
-                      dt.weekday == DateTime.sunday ? 'Воскресенье — выходной' : 'Пар нет 🎉',
-                      style: TextStyle(
-                        fontSize: 13,
-                        color: theme.textTheme.bodySmall?.color?.withValues(alpha: 0.8),
-                      ),
-                    ),
-                  ],
-                ),
+                  ),
+                ],
               ),
             ),
         ],
       ),
     );
+  }
+
+  Widget _buildCalendarCompactLessonCard(
+    ThemeData theme,
+    Lesson lesson,
+    DateTime dt,
+  ) {
+    final typeColor = _getLessonTypeColor(lesson.lessonType);
+    final isCancelled = lesson.isCancelled;
+    final isRoomChanged = lesson.isRoomChanged;
+    final accentColor = isCancelled ? Colors.redAccent : typeColor;
+
+    return Container(
+      margin: const EdgeInsets.symmetric(vertical: 4),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: () => _showLessonDetailModal(context, lesson, dt),
+          borderRadius: BorderRadius.circular(10),
+          child: Container(
+            decoration: BoxDecoration(
+              color: isCancelled
+                  ? Colors.redAccent.withValues(alpha: 0.06)
+                  : (isRoomChanged
+                      ? Colors.amber.withValues(alpha: 0.08)
+                      : theme.colorScheme.surface),
+              borderRadius: BorderRadius.circular(10),
+              border: Border(
+                left: BorderSide(color: accentColor, width: 3.5),
+                top: BorderSide(
+                  color: isRoomChanged
+                      ? Colors.amber.shade600
+                      : theme.dividerColor.withValues(alpha: 0.18),
+                ),
+                right: BorderSide(
+                  color: isRoomChanged
+                      ? Colors.amber.shade600
+                      : theme.dividerColor.withValues(alpha: 0.18),
+                ),
+                bottom: BorderSide(
+                  color: isRoomChanged
+                      ? Colors.amber.shade600
+                      : theme.dividerColor.withValues(alpha: 0.18),
+                ),
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.02),
+                  blurRadius: 4,
+                  offset: const Offset(0, 1),
+                ),
+              ],
+            ),
+            padding: const EdgeInsets.all(8),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Номер пары и время начала
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      '${lesson.lessonNum}п • ${lesson.startTime}',
+                      style: TextStyle(
+                        fontSize: 10.5,
+                        fontWeight: FontWeight.bold,
+                        color: accentColor,
+                      ),
+                    ),
+                    if (isCancelled)
+                      const Text('🚫', style: TextStyle(fontSize: 10))
+                    else if (isRoomChanged)
+                      const Text('⚠️', style: TextStyle(fontSize: 10)),
+                  ],
+                ),
+                const SizedBox(height: 4),
+
+                // Название дисциплины (с многоточием)
+                Text(
+                  lesson.subject,
+                  style: TextStyle(
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w600,
+                    height: 1.2,
+                    decoration: isCancelled ? TextDecoration.lineThrough : null,
+                    color: isCancelled
+                        ? theme.textTheme.bodyMedium?.color?.withValues(alpha: 0.6)
+                        : theme.textTheme.bodyMedium?.color,
+                  ),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                const SizedBox(height: 5),
+
+                // Аудитория
+                Row(
+                  children: [
+                    Icon(
+                      Icons.place_outlined,
+                      size: 11,
+                      color: isRoomChanged
+                          ? Colors.amber.shade800
+                          : theme.colorScheme.primary.withValues(alpha: 0.75),
+                    ),
+                    const SizedBox(width: 2),
+                    Expanded(
+                      child: Text(
+                        lesson.room.isNotEmpty ? lesson.room : 'Ауд. не указана',
+                        style: TextStyle(
+                          fontSize: 10,
+                          fontWeight: FontWeight.w500,
+                          color: isRoomChanged
+                              ? Colors.amber.shade900
+                              : theme.textTheme.bodySmall?.color,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _showLessonDetailModal(BuildContext context, Lesson lesson, DateTime dt) {
+    final theme = Theme.of(context);
+    final weekdayFull = _weekdaysFullRu[dt.weekday - 1];
+    final monthGen = _monthsGenitiveRu[dt.month - 1];
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) {
+        return Container(
+          decoration: BoxDecoration(
+            color: theme.scaffoldBackgroundColor,
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+          ),
+          padding: const EdgeInsets.only(top: 12, bottom: 24),
+          child: SafeArea(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // Drag handle
+                Container(
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: theme.dividerColor.withValues(alpha: 0.3),
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+                const SizedBox(height: 14),
+
+                // Заголовок модального окна с датой
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 20),
+                  child: Row(
+                    children: [
+                      Icon(Icons.event_note_rounded, size: 20, color: theme.colorScheme.primary),
+                      const SizedBox(width: 8),
+                      Text(
+                        '$weekdayFull, ${dt.day} $monthGen',
+                        style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
+                      ),
+                      const Spacer(),
+                      IconButton(
+                        icon: const Icon(Icons.close, size: 20),
+                        onPressed: () => Navigator.pop(ctx),
+                      ),
+                    ],
+                  ),
+                ),
+                const Divider(height: 16),
+
+                // Полноразмерная карточка пары
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                  child: LessonCard(lesson: lesson),
+                ),
+                const SizedBox(height: 12),
+
+                // Кнопка перехода к этому дню в дневном режиме
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 20),
+                  child: OutlinedButton.icon(
+                    onPressed: () {
+                      Navigator.pop(ctx);
+                      _switchToDayFromWeek(dt);
+                    },
+                    icon: const Icon(Icons.calendar_today_rounded, size: 18),
+                    label: const Text('Перейти к расписанию на этот день'),
+                    style: OutlinedButton.styleFrom(
+                      minimumSize: const Size.fromHeight(44),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Color _getLessonTypeColor(String type) {
+    switch (type) {
+      case 'Лекция':
+        return Colors.blue.shade600;
+      case 'Практика':
+        return Colors.indigo.shade600;
+      case 'Лабораторная':
+        return Colors.orange.shade700;
+      case 'Семинар':
+        return Colors.teal.shade600;
+      case 'Военная подготовка':
+        return Colors.green.shade700;
+      case 'Защита':
+        return Colors.purple.shade600;
+      case 'Зачет':
+      case 'Экзамен':
+        return Colors.red.shade600;
+      default:
+        return Colors.indigo.shade600;
+    }
   }
 }
