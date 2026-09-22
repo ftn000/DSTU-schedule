@@ -119,7 +119,7 @@ class ApiService {
     final dateUploading = payload['date_uploading'] as String? ?? infoBlock['dateUploadingRasp'] as String?;
     final warning = fallbackWarning ?? payload['warning'] as String?;
 
-    // Извлекаем недавние изменения для маркировки отмененных пар
+    // Извлекаем недавние изменения для маркировки отмененных пар и переносов
     final recentChanges = (payload['recent_changes'] as List<dynamic>?) ?? [];
     final cancelledLessonIds = <int>{};
     final roomChanges = <int, String>{};
@@ -132,7 +132,7 @@ class ApiService {
       if (changeType == 'CANCELLED') {
         cancelledLessonIds.add(lessonId);
       } else if (changeType == 'ROOM_CHANGED') {
-        roomChanges[lessonId] = ch['details'] as String? ?? '';
+        roomChanges[lessonId] = ch['details'] as String? ?? 'Аудитория перенесена';
       }
     }
 
@@ -141,6 +141,35 @@ class ApiService {
         .map((item) => Lesson.fromJson(item as Map<String, dynamic>))
         .where((lesson) => !lesson.isMilitaryTraining)
         .toList();
+
+    // Добавляем отмененные пары, которых уже нет в основном расписании ДГТУ
+    for (final ch in recentChanges) {
+      final changeType = ch['change_type'] as String?;
+      if (changeType == 'CANCELLED') {
+        final lessonId = ch['lesson_id'] as int?;
+        dynamic rawData = ch['lesson_data'] ?? ch['old_lesson'];
+        Map<String, dynamic>? lessonMap;
+        if (rawData is Map<String, dynamic>) {
+          lessonMap = rawData;
+        } else if (rawData is String && rawData.isNotEmpty) {
+          try {
+            lessonMap = json.decode(rawData) as Map<String, dynamic>?;
+          } catch (_) {}
+        }
+
+        if (lessonMap != null) {
+          final alreadyExists = lessons.any((l) => l.id == lessonId);
+          if (!alreadyExists) {
+            final cancelledLesson = Lesson.fromJson(lessonMap);
+            if (!cancelledLesson.isMilitaryTraining) {
+              cancelledLesson.isCancelled = true;
+              cancelledLesson.changeNote = ch['details'] as String? ?? 'Пара отменена';
+              lessons.add(cancelledLesson);
+            }
+          }
+        }
+      }
+    }
 
     for (final lesson in lessons) {
       if (cancelledLessonIds.contains(lesson.id)) {

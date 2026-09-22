@@ -42,15 +42,27 @@ class Database:
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     target_id TEXT NOT NULL,
                     change_type TEXT NOT NULL,
+                    lesson_id INTEGER,
                     lesson_date TEXT NOT NULL,
                     lesson_num INTEGER,
                     subject TEXT,
                     details TEXT NOT NULL,
                     human_message TEXT NOT NULL,
+                    lesson_data TEXT,
                     detected_at TIMESTAMP NOT NULL,
                     FOREIGN KEY (target_id) REFERENCES schedules(target_id)
                 )
             """)
+
+            # Автоматическая миграция колонок для уже созданной таблицы
+            try:
+                cursor.execute("ALTER TABLE changes_history ADD COLUMN lesson_id INTEGER")
+            except Exception:
+                pass
+            try:
+                cursor.execute("ALTER TABLE changes_history ADD COLUMN lesson_data TEXT")
+            except Exception:
+                pass
 
             # Таблица подписок (для push-уведомлений)
             cursor.execute("""
@@ -133,11 +145,13 @@ class Database:
             (
                 target_id,
                 ch.get("type", "UNKNOWN"),
+                ch.get("lesson_id"),
                 ch.get("date", ""),
                 ch.get("lesson_num", 0),
                 ch.get("subject", ""),
                 ch.get("details", ""),
                 ch.get("human_message", ""),
+                json.dumps(ch.get("old_lesson") or ch.get("new_lesson"), ensure_ascii=False) if (ch.get("old_lesson") or ch.get("new_lesson")) else None,
                 now
             )
             for ch in changes
@@ -147,23 +161,39 @@ class Database:
             cursor = conn.cursor()
             cursor.executemany("""
                 INSERT INTO changes_history 
-                (target_id, change_type, lesson_date, lesson_num, subject, details, human_message, detected_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                (target_id, change_type, lesson_id, lesson_date, lesson_num, subject, details, human_message, lesson_data, detected_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, records)
             conn.commit()
 
-    def get_recent_changes(self, target_id: str, limit: int = 20) -> List[Dict[str, Any]]:
+    def get_recent_changes(self, target_id: str, limit: int = 50) -> List[Dict[str, Any]]:
         """Возвращает историю изменений для студента/группы."""
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("""
-                SELECT id, change_type, lesson_date, lesson_num, subject, details, human_message, detected_at
+                SELECT id, change_type, lesson_id, lesson_date, lesson_num, subject, details, human_message, lesson_data, detected_at
                 FROM changes_history
                 WHERE target_id = ?
                 ORDER BY id DESC
                 LIMIT ?
             """, (target_id, limit))
-            return [dict(row) for row in cursor.fetchall()]
+            results = []
+            for row in cursor.fetchall():
+                d = dict(row)
+                if d.get("lesson_data"):
+                    try:
+                        d["lesson_data"] = json.loads(d["lesson_data"])
+                    except Exception:
+                        pass
+                results.append(d)
+            return results
+
+    def clear_changes(self, target_id: str):
+        """Очищает историю изменений для студента (для сброса тестов)."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM changes_history WHERE target_id = ?", (target_id,))
+            conn.commit()
 
     def get_active_targets(self) -> List[Dict[str, str]]:
         """Возвращает список всех target_id, которые есть в БД или подписках."""

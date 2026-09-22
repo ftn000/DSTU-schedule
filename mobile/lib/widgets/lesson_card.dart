@@ -120,65 +120,81 @@ class LessonCard extends StatelessWidget {
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    if (isCancelled)
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: Colors.redAccent.withValues(alpha: 0.15),
-                          borderRadius: BorderRadius.circular(6),
-                          border: Border.all(color: Colors.redAccent.withValues(alpha: 0.4)),
-                        ),
-                        child: const Text(
-                          '🚫 ОТМЕНЕНА',
-                          style: TextStyle(
-                            fontSize: 10,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.redAccent,
+                    Wrap(
+                      spacing: 6,
+                      children: [
+                        if (isCancelled)
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: Colors.redAccent.withValues(alpha: 0.15),
+                              borderRadius: BorderRadius.circular(6),
+                              border: Border.all(color: Colors.redAccent.withValues(alpha: 0.4)),
+                            ),
+                            child: const Text(
+                              '🚫 ОТМЕНЕНА',
+                              style: TextStyle(
+                                fontSize: 10,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.redAccent,
+                              ),
+                            ),
+                          )
+                        else if (isRoomChanged)
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: Colors.amber.withValues(alpha: 0.2),
+                              borderRadius: BorderRadius.circular(6),
+                              border: Border.all(color: Colors.amber.shade700),
+                            ),
+                            child: Text(
+                              '⚠️ АУДИТОРИЯ ПЕРЕНЕСЕНА',
+                              style: TextStyle(
+                                fontSize: 10,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.amber.shade900,
+                              ),
+                            ),
+                          ),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: isCancelled
+                                ? Colors.grey.withValues(alpha: 0.15)
+                                : badgeColor.withValues(alpha: 0.12),
+                            borderRadius: BorderRadius.circular(6),
+                            border: Border.all(
+                              color: isCancelled
+                                  ? Colors.grey.withValues(alpha: 0.3)
+                                  : badgeColor.withValues(alpha: 0.25),
+                            ),
+                          ),
+                          child: Text(
+                            lesson.lessonType,
+                            style: TextStyle(
+                              fontSize: 10,
+                              fontWeight: FontWeight.bold,
+                              color: isCancelled ? Colors.grey : badgeColor,
+                            ),
                           ),
                         ),
-                      )
-                    else if (isRoomChanged)
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: Colors.amber.withValues(alpha: 0.2),
-                          borderRadius: BorderRadius.circular(6),
-                          border: Border.all(color: Colors.amber.shade700),
-                        ),
-                        child: const Text(
-                          '⚠️ АУДИТОРИЯ ПЕРЕНЕСЕНА',
-                          style: TextStyle(
-                            fontSize: 10,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.amber,
-                          ),
-                        ),
-                      )
-                    else
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: badgeColor.withValues(alpha: 0.12),
-                          borderRadius: BorderRadius.circular(6),
-                          border: Border.all(color: badgeColor.withValues(alpha: 0.25)),
-                        ),
-                        child: Text(
-                          lesson.lessonType,
-                          style: TextStyle(
-                            fontSize: 10,
-                            fontWeight: FontWeight.bold,
-                            color: badgeColor,
-                          ),
-                        ),
-                      ),
+                      ],
+                    ),
 
                     // Бейдж аудитории
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                       decoration: BoxDecoration(
-                        color: theme.colorScheme.surface,
+                        color: isRoomChanged
+                            ? Colors.amber.withValues(alpha: 0.15)
+                            : theme.colorScheme.surface,
                         borderRadius: BorderRadius.circular(6),
-                        border: Border.all(color: theme.dividerColor.withValues(alpha: 0.3)),
+                        border: Border.all(
+                          color: isRoomChanged
+                              ? Colors.amber.shade700
+                              : theme.dividerColor.withValues(alpha: 0.3),
+                        ),
                       ),
                       child: Text(
                         '📍 ${lesson.room.isNotEmpty ? lesson.room : "Ауд. не указана"}',
@@ -186,7 +202,9 @@ class LessonCard extends StatelessWidget {
                           fontSize: 11,
                           fontWeight: FontWeight.w600,
                           decoration: isCancelled ? TextDecoration.lineThrough : null,
-                          color: theme.textTheme.bodyMedium?.color,
+                          color: isRoomChanged
+                              ? Colors.amber.shade900
+                              : theme.textTheme.bodyMedium?.color,
                         ),
                       ),
                     ),

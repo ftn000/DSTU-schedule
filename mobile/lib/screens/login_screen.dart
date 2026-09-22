@@ -240,7 +240,7 @@ class _LoginScreenState extends State<LoginScreen> {
                         Text(
                           '1. Перейдите на сайт edu.donstu.ru\n'
                           '2. Откройте раздел «Расписание» своей группы\n'
-                          '3. В адресной строке браузера посмотрите ссылку: параметр idStudent=XXXXXX (это и есть ваш 6-значный код).',
+                          '3. На странице расписания кнопка экспорт -> ссылка: параметр idStudent=XXXXXX (это и есть ваш 6-значный код).',
                           style: TextStyle(
                             fontSize: 12,
                             height: 1.45,

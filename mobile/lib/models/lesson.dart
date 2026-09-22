@@ -3,7 +3,7 @@ class Lesson {
   final String subject;
   final String rawSubject;
   final String teacher;
-  final String room;
+  String room;
   final int lessonNum;
   final String startTime;
   final String endTime;

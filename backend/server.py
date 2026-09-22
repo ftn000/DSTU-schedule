@@ -265,6 +265,100 @@ async def manual_sync_trigger():
     return {"status": "ok", "message": "Фоновая синхронизация запущена"}
 
 
+@app.post("/api/simulate/{student_id}")
+async def simulate_changes(student_id: int):
+    """
+    Симулирует изменения в расписании студента:
+    1. Перенос аудитории для 5-й пары (2-805 -> 8-402).
+    2. Отмену 6-й пары (Экономика игр).
+    """
+    target_id = f"student_{student_id}"
+    cached = db.get_schedule(target_id)
+    if not cached:
+        # Сначала загружаем
+        fetch_res = fetch_schedule(student_id)
+        if not fetch_res.success:
+            raise HTTPException(status_code=502, detail="Не удалось загрузить расписание ДГТУ для симуляции")
+        db.save_schedule(target_id, "student", fetch_res.data, fetch_res.upload_date)
+        cached = db.get_schedule(target_id)
+
+    data = cached["data"]
+    rasp = data.get("data", {}).get("rasp", [])
+
+    simulated_changes = []
+    from datetime import datetime
+    today_str = datetime.now().strftime("%Y-%m-%d")
+
+    # Ищем пары на сегодня (или берем ближайшие доступные)
+    today_lessons = [l for l in rasp if l.get("дата", "").startswith(today_str)]
+    if not today_lessons and rasp:
+        first_date = rasp[0].get("дата", "")[:10]
+        today_lessons = [l for l in rasp if l.get("дата", "").startswith(first_date)]
+
+    new_rasp = []
+    for l in rasp:
+        code = l.get("код")
+        num = l.get("номерЗанятия")
+        date = l.get("дата", "")[:10]
+
+        # Симулируем перенос 5-й пары (или первой попавшейся сегодня)
+        if today_lessons and l == today_lessons[0]:
+            old_aud = l.get("аудитория", "")
+            l["аудитория"] = "8-402"
+            simulated_changes.append({
+                "type": "ROOM_CHANGED",
+                "lesson_id": code,
+                "date": date,
+                "lesson_num": num,
+                "subject": l.get("дисциплина", ""),
+                "details": f"Аудитория перенесена: {old_aud} ➔ 8-402",
+                "human_message": f"{date}, {num}-я пара: аудитория перенесена в 8-402 (была {old_aud})",
+                "old_lesson": l,
+                "new_lesson": l
+            })
+            new_rasp.append(l)
+
+        # Симулируем отмену 6-й пары (или второй попавшейся сегодня)
+        elif len(today_lessons) > 1 and l == today_lessons[1]:
+            old_aud = l.get("аудитория", "")
+            simulated_changes.append({
+                "type": "CANCELLED",
+                "lesson_id": code,
+                "date": date,
+                "lesson_num": num,
+                "subject": l.get("дисциплина", ""),
+                "details": f"Пара отменена преподавателем (была в ауд. {old_aud})",
+                "human_message": f"{date}, {num}-я пара ({l.get('дисциплина', '')}): пара отменена!",
+                "old_lesson": l,
+                "new_lesson": None
+            })
+            # Не добавляем в new_rasp (симулируем удаление парой из базы вуза)
+        else:
+            new_rasp.append(l)
+
+    # Сохраняем обновленные данные и историю изменений
+    data["data"]["rasp"] = new_rasp
+    db.save_schedule(target_id, "student", data, cached.get("date_uploading"))
+    db.log_changes(target_id, simulated_changes)
+
+    return {
+        "status": "ok",
+        "message": f"Успешно симулировано {len(simulated_changes)} изменений",
+        "changes": simulated_changes
+    }
+
+
+@app.post("/api/simulate/reset/{student_id}")
+async def reset_simulation(student_id: int):
+    """Сбрасывает симуляцию: очищает историю изменений и повторно стягивает расписание из ДГТУ."""
+    target_id = f"student_{student_id}"
+    db.clear_changes(target_id)
+    fetch_res = fetch_schedule(student_id)
+    if fetch_res.success:
+        db.save_schedule(target_id, "student", fetch_res.data, fetch_res.upload_date)
+    return {"status": "ok", "message": "Симуляция сброшена, расписание восстановлено из ДГТУ"}
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("server:app", host="0.0.0.0", port=8000, reload=True)
