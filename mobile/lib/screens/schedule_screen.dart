@@ -62,15 +62,61 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
     // Автопрокрутка к сегодняшнему дню после построения кадра
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final todayIndex = now.weekday - 1;
-      if (todayIndex > 1 && _dayScrollController.hasClients) {
-        final targetOffset = (todayIndex - 1) * 76.0;
-        _dayScrollController.animateTo(
-          targetOffset,
-          duration: const Duration(milliseconds: 300),
-          curve: Curves.easeOut,
-        );
+      if (todayIndex >= 0) {
+        _scrollToDayIndex(todayIndex);
       }
     });
+  }
+
+  void _selectDate(DateTime dt) {
+    final dateStr = DateFormat('yyyy-MM-dd').format(dt);
+    if (dateStr == _selectedDate) return;
+
+    setState(() {
+      _selectedDate = dateStr;
+    });
+
+    final index = _twoWeeksDays.indexWhere(
+      (d) => DateFormat('yyyy-MM-dd').format(d) == dateStr,
+    );
+    if (index != -1) {
+      _scrollToDayIndex(index);
+    }
+  }
+
+  void _goToToday() {
+    final now = DateTime.now();
+    _selectDate(now);
+  }
+
+  void _goToPreviousDay() {
+    final currentIndex = _twoWeeksDays.indexWhere(
+      (d) => DateFormat('yyyy-MM-dd').format(d) == _selectedDate,
+    );
+    if (currentIndex > 0) {
+      _selectDate(_twoWeeksDays[currentIndex - 1]);
+    }
+  }
+
+  void _goToNextDay() {
+    final currentIndex = _twoWeeksDays.indexWhere(
+      (d) => DateFormat('yyyy-MM-dd').format(d) == _selectedDate,
+    );
+    if (currentIndex != -1 && currentIndex < _twoWeeksDays.length - 1) {
+      _selectDate(_twoWeeksDays[currentIndex + 1]);
+    }
+  }
+
+  void _scrollToDayIndex(int index) {
+    if (_dayScrollController.hasClients) {
+      final screenWidth = MediaQuery.of(context).size.width;
+      final targetOffset = (index * 76.0) - (screenWidth / 2) + 38.0;
+      _dayScrollController.animateTo(
+        targetOffset.clamp(0.0, _dayScrollController.position.maxScrollExtent),
+        duration: const Duration(milliseconds: 300),
+        curve: Curves.easeOutCubic,
+      );
+    }
   }
 
   Future<void> _loadSchedule({bool forceRefresh = false}) async {
@@ -161,6 +207,11 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
         ),
         actions: [
           IconButton(
+            icon: const Icon(Icons.today_rounded),
+            tooltip: 'Сегодня',
+            onPressed: _goToToday,
+          ),
+          IconButton(
             icon: const Icon(Icons.refresh),
             tooltip: 'Обновить',
             onPressed: () => _loadSchedule(forceRefresh: true),
@@ -188,6 +239,13 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
           ),
         ],
       ),
+      floatingActionButton: _selectedDate != _todayDateStr
+          ? FloatingActionButton.extended(
+              onPressed: _goToToday,
+              icon: const Icon(Icons.today_rounded),
+              label: const Text('Сегодня'),
+            )
+          : null,
       body: _buildBody(theme),
     );
   }
@@ -291,11 +349,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
               return Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 4),
                 child: InkWell(
-                  onTap: () {
-                    setState(() {
-                      _selectedDate = dateStr;
-                    });
-                  },
+                  onTap: () => _selectDate(dt),
                   borderRadius: BorderRadius.circular(14),
                   child: Container(
                     width: 68,
@@ -360,41 +414,54 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
 
         // Список пар на выбранный день
         Expanded(
-          child: RefreshIndicator(
-            onRefresh: () => _loadSchedule(forceRefresh: true),
-            child: currentDayLessons.isEmpty
-                ? Center(
-                    child: SingleChildScrollView(
-                      physics: const AlwaysScrollableScrollPhysics(),
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(
-                            Icons.weekend_outlined, 
-                            size: 64, 
-                            color: theme.disabledColor.withValues(alpha: 0.5),
-                          ),
-                          const SizedBox(height: 12),
-                          const Text(
-                            'На этот день пар нет 🎉',
-                            style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            'Можно отдыхать или заняться своими делами',
-                            style: TextStyle(color: theme.textTheme.bodySmall?.color),
-                          ),
-                        ],
+          child: GestureDetector(
+            behavior: HitTestBehavior.translucent,
+            onHorizontalDragEnd: (details) {
+              if (details.primaryVelocity == null) return;
+              if (details.primaryVelocity! < -180) {
+                // Свайп влево -> следующий день
+                _goToNextDay();
+              } else if (details.primaryVelocity! > 180) {
+                // Свайп вправо -> предыдущий день
+                _goToPreviousDay();
+              }
+            },
+            child: RefreshIndicator(
+              onRefresh: () => _loadSchedule(forceRefresh: true),
+              child: currentDayLessons.isEmpty
+                  ? Center(
+                      child: SingleChildScrollView(
+                        physics: const AlwaysScrollableScrollPhysics(),
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(
+                              Icons.weekend_outlined, 
+                              size: 64, 
+                              color: theme.disabledColor.withValues(alpha: 0.5),
+                            ),
+                            const SizedBox(height: 12),
+                            const Text(
+                              'На этот день пар нет 🎉',
+                              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              'Можно отдыхать или заняться своими делами',
+                              style: TextStyle(color: theme.textTheme.bodySmall?.color),
+                            ),
+                          ],
+                        ),
                       ),
+                    )
+                  : ListView.builder(
+                      padding: const EdgeInsets.symmetric(vertical: 8),
+                      itemCount: currentDayLessons.length,
+                      itemBuilder: (context, index) {
+                        return LessonCard(lesson: currentDayLessons[index]);
+                      },
                     ),
-                  )
-                : ListView.builder(
-                    padding: const EdgeInsets.symmetric(vertical: 8),
-                    itemCount: currentDayLessons.length,
-                    itemBuilder: (context, index) {
-                      return LessonCard(lesson: currentDayLessons[index]);
-                    },
-                  ),
+            ),
           ),
         ),
       ],
