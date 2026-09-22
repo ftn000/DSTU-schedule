@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/lesson.dart';
+import '../models/schedule_change.dart';
 
 class ScheduleResponse {
   final List<Lesson> lessons;
@@ -9,6 +10,7 @@ class ScheduleResponse {
   final String? dateUploading;
   final String? warning;
   final bool isFromCache;
+  final List<ScheduleChange> changes;
 
   ScheduleResponse({
     required this.lessons,
@@ -16,6 +18,7 @@ class ScheduleResponse {
     this.dateUploading,
     this.warning,
     required this.isFromCache,
+    this.changes = const [],
   });
 }
 
@@ -45,6 +48,28 @@ class ApiService {
   Future<void> clearSavedStudentId() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_savedIdKey);
+  }
+
+  static const String _readChangeIdsKey = 'read_change_ids';
+
+  Future<Set<int>> getReadChangeIds() async {
+    final prefs = await SharedPreferences.getInstance();
+    final list = prefs.getStringList(_readChangeIdsKey) ?? [];
+    return list.map((e) => int.tryParse(e) ?? 0).where((e) => e > 0).toSet();
+  }
+
+  Future<void> markChangeAsRead(int changeId) async {
+    final prefs = await SharedPreferences.getInstance();
+    final list = prefs.getStringList(_readChangeIdsKey) ?? [];
+    final set = list.toSet()..add(changeId.toString());
+    await prefs.setStringList(_readChangeIdsKey, set.toList());
+  }
+
+  Future<void> markAllChangesAsRead(List<int> changeIds) async {
+    final prefs = await SharedPreferences.getInstance();
+    final list = prefs.getStringList(_readChangeIdsKey) ?? [];
+    final set = list.toSet()..addAll(changeIds.map((e) => e.toString()));
+    await prefs.setStringList(_readChangeIdsKey, set.toList());
   }
 
   /// Проверяет существование студента в ДГТУ и возвращает название группы
@@ -237,12 +262,17 @@ class ApiService {
       }
     }
 
+    final parsedChanges = recentChanges
+        .map((ch) => ScheduleChange.fromJson(ch as Map<String, dynamic>))
+        .toList();
+
     return ScheduleResponse(
       lessons: lessons,
       groupName: groupName,
       dateUploading: dateUploading,
       warning: warning,
       isFromCache: isFromCache,
+      changes: parsedChanges,
     );
   }
 }

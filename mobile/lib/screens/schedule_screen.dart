@@ -30,6 +30,13 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
   bool _isWeeklyView = false;
   int _selectedWeekIndex = 0; // 0: текущая неделя, 1: следующая неделя
 
+  Set<int> _readChangeIds = {};
+
+  int get _unreadChangesCount {
+    if (_scheduleData == null) return 0;
+    return _scheduleData!.changes.where((c) => !_readChangeIds.contains(c.id)).length;
+  }
+
   static const List<String> _weekdaysRu = [
     'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'
   ];
@@ -177,16 +184,296 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
 
     try {
       final res = await _apiService.getSchedule(widget.studentId, forceRefresh: forceRefresh);
-      setState(() {
-        _scheduleData = res;
-        _isLoading = false;
-      });
+      final readIds = await _apiService.getReadChangeIds();
+
+      if (mounted) {
+        final previousUnread = _unreadChangesCount;
+        setState(() {
+          _scheduleData = res;
+          _readChangeIds = readIds;
+          _isLoading = false;
+        });
+
+        if (forceRefresh && _unreadChangesCount > previousUnread && _unreadChangesCount > 0) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('🔔 Обнаружено изменений в расписании: $_unreadChangesCount'),
+              action: SnackBarAction(
+                label: 'Посмотреть',
+                onPressed: _showNotificationsSheet,
+              ),
+              behavior: SnackBarBehavior.floating,
+              duration: const Duration(seconds: 4),
+            ),
+          );
+        }
+      }
     } catch (e) {
-      setState(() {
-        _errorMessage = e.toString().replaceAll('Exception: ', '');
-        _isLoading = false;
-      });
+      if (mounted) {
+        setState(() {
+          _errorMessage = e.toString().replaceAll('Exception: ', '');
+          _isLoading = false;
+        });
+      }
     }
+  }
+
+  void _showNotificationsSheet() {
+    final theme = Theme.of(context);
+    final changes = _scheduleData?.changes ?? [];
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            final unreadInModal = changes.where((c) => !_readChangeIds.contains(c.id)).length;
+
+            return Container(
+              height: MediaQuery.of(context).size.height * 0.75,
+              decoration: BoxDecoration(
+                color: theme.scaffoldBackgroundColor,
+                borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+              ),
+              child: SafeArea(
+                child: Column(
+                  children: [
+                    // Handle
+                    const SizedBox(height: 12),
+                    Container(
+                      width: 40,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: theme.dividerColor.withValues(alpha: 0.3),
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+
+                    // Header
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 20),
+                      child: Row(
+                        children: [
+                          Icon(Icons.notifications_active_rounded, color: theme.colorScheme.primary, size: 24),
+                          const SizedBox(width: 10),
+                          const Expanded(
+                            child: Text(
+                              'Уведомления об изменениях',
+                              style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
+                            ),
+                          ),
+                          if (unreadInModal > 0)
+                            TextButton(
+                              onPressed: () async {
+                                final allIds = changes.map((c) => c.id).toList();
+                                await _apiService.markAllChangesAsRead(allIds);
+                                setState(() {
+                                  _readChangeIds.addAll(allIds);
+                                });
+                                setModalState(() {});
+                              },
+                              child: const Text('Прочитать все', style: TextStyle(fontSize: 12)),
+                            ),
+                          IconButton(
+                            icon: const Icon(Icons.close, size: 20),
+                            onPressed: () => Navigator.pop(ctx),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const Divider(height: 1),
+
+                    // Content
+                    Expanded(
+                      child: changes.isEmpty
+                          ? Center(
+                              child: Padding(
+                                padding: const EdgeInsets.all(32),
+                                child: Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Icon(
+                                      Icons.notifications_none_rounded,
+                                      size: 56,
+                                      color: theme.disabledColor.withValues(alpha: 0.5),
+                                    ),
+                                    const SizedBox(height: 16),
+                                    const Text(
+                                      'Изменений в расписании нет',
+                                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                                    ),
+                                    const SizedBox(height: 8),
+                                    Text(
+                                      'Когда сайт ДГТУ перенесет пару, сменит аудиторию или отменит занятие, уведомление появится здесь.',
+                                      textAlign: TextAlign.center,
+                                      style: TextStyle(
+                                        fontSize: 13,
+                                        color: theme.textTheme.bodySmall?.color,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            )
+                          : ListView.builder(
+                              padding: const EdgeInsets.all(16),
+                              itemCount: changes.length,
+                              itemBuilder: (context, index) {
+                                final ch = changes[index];
+                                final isRead = _readChangeIds.contains(ch.id);
+
+                                Color badgeColor;
+                                switch (ch.changeType) {
+                                  case 'CANCELLED':
+                                    badgeColor = Colors.redAccent;
+                                    break;
+                                  case 'ROOM_CHANGED':
+                                    badgeColor = Colors.amber.shade800;
+                                    break;
+                                  case 'ADDED':
+                                  case 'NEW':
+                                    badgeColor = Colors.green.shade700;
+                                    break;
+                                  case 'TEACHER_CHANGED':
+                                    badgeColor = Colors.purple.shade600;
+                                    break;
+                                  default:
+                                    badgeColor = theme.colorScheme.primary;
+                                }
+
+                                return Card(
+                                  margin: const EdgeInsets.only(bottom: 12),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(14),
+                                    side: BorderSide(
+                                      color: isRead
+                                          ? theme.dividerColor.withValues(alpha: 0.1)
+                                          : badgeColor.withValues(alpha: 0.5),
+                                      width: isRead ? 1.0 : 1.5,
+                                    ),
+                                  ),
+                                  color: isRead
+                                      ? theme.colorScheme.surface
+                                      : badgeColor.withValues(alpha: 0.04),
+                                  child: InkWell(
+                                    onTap: () async {
+                                      if (!isRead) {
+                                        await _apiService.markChangeAsRead(ch.id);
+                                        setState(() {
+                                          _readChangeIds.add(ch.id);
+                                        });
+                                        setModalState(() {});
+                                      }
+                                    },
+                                    borderRadius: BorderRadius.circular(14),
+                                    child: Padding(
+                                      padding: const EdgeInsets.all(14),
+                                      child: Column(
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        children: [
+                                          Row(
+                                            children: [
+                                              Container(
+                                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                                decoration: BoxDecoration(
+                                                  color: badgeColor.withValues(alpha: 0.12),
+                                                  borderRadius: BorderRadius.circular(6),
+                                                  border: Border.all(color: badgeColor.withValues(alpha: 0.3)),
+                                                ),
+                                                child: Row(
+                                                  mainAxisSize: MainAxisSize.min,
+                                                  children: [
+                                                    Text(ch.typeIconEmoji, style: const TextStyle(fontSize: 12)),
+                                                    const SizedBox(width: 4),
+                                                    Text(
+                                                      ch.typeLabel.toUpperCase(),
+                                                      style: TextStyle(
+                                                        fontSize: 10,
+                                                        fontWeight: FontWeight.bold,
+                                                        color: badgeColor,
+                                                      ),
+                                                    ),
+                                                  ],
+                                                ),
+                                              ),
+                                              const Spacer(),
+                                              if (!isRead)
+                                                Container(
+                                                  width: 8,
+                                                  height: 8,
+                                                  decoration: BoxDecoration(
+                                                    color: badgeColor,
+                                                    shape: BoxShape.circle,
+                                                  ),
+                                                ),
+                                            ],
+                                          ),
+                                          const SizedBox(height: 8),
+                                          Text(
+                                            ch.subject,
+                                            style: const TextStyle(
+                                              fontSize: 15,
+                                              fontWeight: FontWeight.bold,
+                                            ),
+                                          ),
+                                          const SizedBox(height: 4),
+                                          Text(
+                                            ch.humanMessage.isNotEmpty
+                                                ? ch.humanMessage
+                                                : '${ch.lessonDate}, ${ch.lessonNum}-я пара: ${ch.details}',
+                                            style: TextStyle(
+                                              fontSize: 13,
+                                              color: theme.textTheme.bodyMedium?.color?.withValues(alpha: 0.85),
+                                            ),
+                                          ),
+                                          const SizedBox(height: 10),
+                                          Row(
+                                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                            children: [
+                                              Text(
+                                                'Дата пары: ${ch.lessonDate}',
+                                                style: TextStyle(
+                                                  fontSize: 11,
+                                                  color: theme.textTheme.bodySmall?.color,
+                                                ),
+                                              ),
+                                              TextButton.icon(
+                                                onPressed: () {
+                                                  Navigator.pop(ctx);
+                                                  final dt = DateTime.tryParse(ch.lessonDate);
+                                                  if (dt != null) {
+                                                    _switchToDayFromWeek(dt);
+                                                  }
+                                                },
+                                                icon: const Icon(Icons.arrow_forward_rounded, size: 14),
+                                                label: const Text('В расписание', style: TextStyle(fontSize: 12)),
+                                                style: TextButton.styleFrom(
+                                                  padding: EdgeInsets.zero,
+                                                  minimumSize: Size.zero,
+                                                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                );
+                              },
+                            ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
   }
 
   Future<void> _handleSwitchStudent() async {
@@ -294,6 +581,38 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
           ],
         ),
         actions: [
+          Stack(
+            alignment: Alignment.center,
+            children: [
+              IconButton(
+                icon: const Icon(Icons.notifications_outlined),
+                tooltip: 'Уведомления об изменениях',
+                onPressed: _showNotificationsSheet,
+              ),
+              if (_unreadChangesCount > 0)
+                Positioned(
+                  right: 8,
+                  top: 8,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: Colors.redAccent,
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    constraints: const BoxConstraints(minWidth: 16, minHeight: 16),
+                    child: Text(
+                      '$_unreadChangesCount',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 10,
+                        fontWeight: FontWeight.bold,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
+                ),
+            ],
+          ),
           IconButton(
             icon: const Icon(Icons.refresh),
             tooltip: 'Обновить',
@@ -702,29 +1021,52 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
 
         // Календарная сетка: дни недели слева направо в горизонтальном скролле
         Expanded(
-          child: RefreshIndicator(
-            onRefresh: () => _loadSchedule(forceRefresh: true),
-            child: SingleChildScrollView(
-              physics: const AlwaysScrollableScrollPhysics(),
-              child: SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                physics: const BouncingScrollPhysics(),
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 12),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: weekDays.map((dt) {
-                    final dateStr = DateFormat('yyyy-MM-dd').format(dt);
-                    final isToday = dateStr == _todayDateStr;
-                    final dayLessons = _scheduleData?.lessons.where((l) {
-                      return l.rawDate.startsWith(dateStr);
-                    }).toList() ?? [];
-                    dayLessons.sort((a, b) => a.lessonNum.compareTo(b.lessonNum));
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              return RefreshIndicator(
+                onRefresh: () => _loadSchedule(forceRefresh: true),
+                child: SingleChildScrollView(
+                  physics: const AlwaysScrollableScrollPhysics(),
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(
+                      minHeight: constraints.maxHeight,
+                      minWidth: constraints.maxWidth,
+                    ),
+                    child: SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      physics: const BouncingScrollPhysics(),
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 12),
+                      child: Container(
+                        constraints: BoxConstraints(
+                          minHeight: constraints.maxHeight > 24 ? constraints.maxHeight - 24 : 0,
+                        ),
+                        color: Colors.transparent,
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: weekDays.map((dt) {
+                            final dateStr = DateFormat('yyyy-MM-dd').format(dt);
+                            final isToday = dateStr == _todayDateStr;
+                            final dayLessons = _scheduleData?.lessons.where((l) {
+                              return l.rawDate.startsWith(dateStr);
+                            }).toList() ?? [];
+                            dayLessons.sort((a, b) => a.lessonNum.compareTo(b.lessonNum));
 
-                    return _buildCalendarDayColumn(theme, dt, dateStr, isToday, dayLessons);
-                  }).toList(),
+                            return _buildCalendarDayColumn(
+                              theme,
+                              dt,
+                              dateStr,
+                              isToday,
+                              dayLessons,
+                              minColumnHeight: constraints.maxHeight > 48 ? constraints.maxHeight - 48 : 0,
+                            );
+                          }).toList(),
+                        ),
+                      ),
+                    ),
+                  ),
                 ),
-              ),
-            ),
+              );
+            },
           ),
         ),
       ],
@@ -736,8 +1078,9 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
     DateTime dt,
     String dateStr,
     bool isToday,
-    List<Lesson> dayLessons,
-  ) {
+    List<Lesson> dayLessons, {
+    double minColumnHeight = 0,
+  }) {
     final weekday = _weekdaysRu[dt.weekday - 1];
     final month = _monthsRu[dt.month - 1];
     final isSunday = dt.weekday == DateTime.sunday;
@@ -745,6 +1088,8 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
     return Container(
       width: 120,
       margin: const EdgeInsets.symmetric(horizontal: 4),
+      constraints: BoxConstraints(minHeight: minColumnHeight),
+      color: Colors.transparent,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
