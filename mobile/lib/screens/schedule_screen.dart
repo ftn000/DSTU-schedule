@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import '../config/app_config.dart';
 import '../models/lesson.dart';
 import '../services/api_service.dart';
 import '../widgets/lesson_card.dart';
@@ -218,6 +219,37 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
     }
   }
 
+  void _showAboutAppDialog() {
+    showAboutDialog(
+      context: context,
+      applicationName: AppConfig.appName,
+      applicationVersion: AppConfig.fullVersionString,
+      applicationIcon: Container(
+        width: 48,
+        height: 48,
+        decoration: BoxDecoration(
+          color: Theme.of(context).colorScheme.primaryContainer,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Icon(
+          Icons.school_rounded,
+          color: Theme.of(context).colorScheme.primary,
+          size: 28,
+        ),
+      ),
+      children: [
+        const SizedBox(height: 12),
+        Text('ID студента: ${widget.studentId}'),
+        if (_scheduleData != null)
+          Text('Группа: ${_scheduleData!.groupName}'),
+        const SizedBox(height: 8),
+        const Text(
+          'Быстрое и удобное расписание ДГТУ с офлайн-кэшем, отслеживанием изменений и календарем.',
+        ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -273,6 +305,8 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
             onSelected: (value) {
               if (value == 'switch_student') {
                 _handleSwitchStudent();
+              } else if (value == 'about') {
+                _showAboutAppDialog();
               }
             },
             itemBuilder: (context) => [
@@ -283,6 +317,16 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                     Icon(Icons.swap_horiz_rounded, size: 20, color: theme.colorScheme.primary),
                     const SizedBox(width: 10),
                     const Text('Сменить ID студента'),
+                  ],
+                ),
+              ),
+              PopupMenuItem(
+                value: 'about',
+                child: Row(
+                  children: [
+                    Icon(Icons.info_outline_rounded, size: 20, color: theme.colorScheme.primary),
+                    const SizedBox(width: 10),
+                    const Text('О приложении'),
                   ],
                 ),
               ),

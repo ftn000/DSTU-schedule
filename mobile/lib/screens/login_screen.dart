@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import '../config/app_config.dart';
 import '../services/api_service.dart';
 import 'schedule_screen.dart';
 
@@ -248,6 +249,15 @@ class _LoginScreenState extends State<LoginScreen> {
                           ),
                         ),
                       ],
+                    ),
+                  ),
+
+                  const SizedBox(height: 24),
+                  Text(
+                    '${AppConfig.appName} ${AppConfig.fullVersionString}',
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: theme.textTheme.bodySmall?.color?.withValues(alpha: 0.5),
                     ),
                   ),
                 ],
