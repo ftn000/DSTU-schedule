@@ -1,11 +1,18 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'services/api_service.dart';
+import 'services/notification_service.dart';
+import 'services/background_service.dart';
 import 'screens/schedule_screen.dart';
 import 'screens/login_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  
+  // Инициализация системных уведомлений и фонового воркера WorkManager
+  await NotificationService().initialize();
+  await BackgroundService.initialize();
+
   final apiService = ApiService();
   final savedId = await apiService.getSavedStudentId();
 

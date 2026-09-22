@@ -72,6 +72,21 @@ class ApiService {
     await prefs.setStringList(_readChangeIdsKey, set.toList());
   }
 
+  static const String _notifiedChangeIdsKey = 'notified_change_ids';
+
+  Future<Set<int>> getNotifiedChangeIds() async {
+    final prefs = await SharedPreferences.getInstance();
+    final list = prefs.getStringList(_notifiedChangeIdsKey) ?? [];
+    return list.map((e) => int.tryParse(e) ?? 0).where((e) => e > 0).toSet();
+  }
+
+  Future<void> markChangesAsNotified(List<int> changeIds) async {
+    final prefs = await SharedPreferences.getInstance();
+    final list = prefs.getStringList(_notifiedChangeIdsKey) ?? [];
+    final set = list.toSet()..addAll(changeIds.map((e) => e.toString()));
+    await prefs.setStringList(_notifiedChangeIdsKey, set.toList());
+  }
+
   /// Проверяет существование студента в ДГТУ и возвращает название группы
   Future<String> verifyStudentId(int studentId) async {
     final res = await getSchedule(studentId, forceRefresh: true);

@@ -3,6 +3,7 @@ import 'package:intl/intl.dart';
 import '../config/app_config.dart';
 import '../models/lesson.dart';
 import '../services/api_service.dart';
+import '../services/notification_service.dart';
 import '../widgets/lesson_card.dart';
 import 'login_screen.dart';
 
@@ -17,6 +18,7 @@ class ScheduleScreen extends StatefulWidget {
 
 class _ScheduleScreenState extends State<ScheduleScreen> {
   final ApiService _apiService = ApiService();
+  final NotificationService _notificationService = NotificationService();
   final ScrollController _dayScrollController = ScrollController();
 
   bool _isLoading = true;
@@ -185,6 +187,18 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
     try {
       final res = await _apiService.getSchedule(widget.studentId, forceRefresh: forceRefresh);
       final readIds = await _apiService.getReadChangeIds();
+      final notifiedIds = await _apiService.getNotifiedChangeIds();
+
+      // Проверяем новые изменения, о которых еще не было системного уведомления в шторке
+      final newUnnotified = res.changes.where((c) => !notifiedIds.contains(c.id)).toList();
+      if (newUnnotified.isNotEmpty) {
+        if (newUnnotified.length == 1) {
+          await _notificationService.showScheduleChangeNotification(newUnnotified.first);
+        } else {
+          await _notificationService.showMultipleChangesNotification(newUnnotified);
+        }
+        await _apiService.markChangesAsNotified(newUnnotified.map((c) => c.id).toList());
+      }
 
       if (mounted) {
         final previousUnread = _unreadChangesCount;
@@ -465,6 +479,36 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                                 );
                               },
                             ),
+                    ),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                      decoration: BoxDecoration(
+                        color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
+                        border: Border(top: BorderSide(color: theme.dividerColor.withValues(alpha: 0.15))),
+                      ),
+                      child: SizedBox(
+                        width: double.infinity,
+                        child: OutlinedButton.icon(
+                          onPressed: () async {
+                            await _notificationService.showTestNotification();
+                            if (context.mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text('🔔 Тестовое уведомление отправлено в шторку Android! Проверьте верхнюю панель.'),
+                                  behavior: SnackBarBehavior.floating,
+                                  duration: Duration(seconds: 3),
+                                ),
+                              );
+                            }
+                          },
+                          icon: const Icon(Icons.notifications_active_outlined, size: 18),
+                          label: const Text('Тест уведомления в шторку Android', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                          style: OutlinedButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                          ),
+                        ),
+                      ),
                     ),
                   ],
                 ),
