@@ -8,6 +8,9 @@ import urllib.request
 import urllib.error
 import json
 import time
+import re
+import collections
+from datetime import datetime, timedelta
 from typing import Optional, Dict, Any
 from dataclasses import dataclass
 
@@ -23,6 +26,50 @@ HEADERS = {
     "Accept": "application/json, text/plain, */*",
     "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
 }
+
+ACADEMIC_GROUP_REGEX = re.compile(
+    r'(?:Т\.[А-Я]{2,4}\d{2}|(?<![А-ЯA-Za-z0-9])[А-Я]{2,4}\d{2}(?![А-ЯA-Za-z0-9]))'
+)
+
+
+def extract_actual_group(rasp_list: list, fallback_name: Optional[str] = None) -> str:
+    """
+    Вычленяет настоящую актуальную академическую группу студента (например, Т.РИ42, ВПР41).
+    В ДГТУ поле info.group.name часто 'заморожено' на первом курсе (например, Т23EngСР-03),
+    а в поле 'группа' на парах пишутся сложные коды вроде 'Т26ВиМИ-Т.РИ42(6993)'.
+    """
+    if not rasp_list:
+        return fallback_name or "Группа"
+
+    cutoff = (datetime.now() - timedelta(days=200)).strftime("%Y-%m-%d")
+    counter = collections.Counter()
+
+    for l in rasp_list:
+        if not isinstance(l, dict):
+            continue
+        raw_date = l.get("дата", "")[:10]
+        if raw_date and raw_date < cutoff:
+            continue
+        subj = str(l.get("дисциплина", "")).lower()
+        if "военная кафедра" in subj or "полковник" in str(l.get("преподаватель", "")).lower():
+            continue
+
+        raw_grp = l.get("группа", "")
+        for m in ACADEMIC_GROUP_REGEX.findall(raw_grp):
+            counter[m] += 1
+
+    if counter:
+        return counter.most_common(1)[0][0]
+
+    for l in reversed(rasp_list):
+        if not isinstance(l, dict):
+            continue
+        raw_grp = l.get("группа", "")
+        matches = ACADEMIC_GROUP_REGEX.findall(raw_grp)
+        if matches:
+            return matches[0]
+
+    return fallback_name or "Группа"
 
 
 @dataclass
@@ -98,18 +145,23 @@ def fetch_schedule(
                 # Извлекаем полезные метаданные
                 info_block = data_block.get("info", {})
                 upload_date = info_block.get("dateUploadingRasp") if isinstance(info_block, dict) else None
-                group_name = (
+                raw_group_name = (
                     info_block.get("group", {}).get("name") 
                     if isinstance(info_block, dict) and isinstance(info_block.get("group"), dict) 
                     else None
                 )
+                actual_group = extract_actual_group(rasp_list, fallback_name=raw_group_name)
+
+                # Обновляем поле имени группы на актуальное
+                if isinstance(info_block, dict) and isinstance(info_block.get("group"), dict):
+                    info_block["group"]["name"] = actual_group
 
                 return FetchResult(
                     success=True,
                     data=parsed_json,
                     lessons_count=len(rasp_list),
                     upload_date=upload_date,
-                    group_name=group_name
+                    group_name=actual_group
                 )
 
         except urllib.error.HTTPError as e:

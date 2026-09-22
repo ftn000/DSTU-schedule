@@ -120,7 +120,57 @@ class ApiService {
     final dataBlock = payload['data']?['data'] ?? payload['data'] ?? {};
     final rawLessons = (dataBlock['rasp'] as List<dynamic>?) ?? [];
     final infoBlock = dataBlock['info'] as Map<String, dynamic>? ?? {};
-    final groupName = infoBlock['group']?['name'] as String? ?? 'Группа';
+    String groupName = infoBlock['group']?['name'] as String? ?? 'Группа';
+
+    // Интеллектуальное вычленение реальной академической группы (например, Т.РИ42, ВПР41)
+    // В ДГТУ info.group.name часто 'заморожен' на 1-м курсе (напр. Т23EngСР-03),
+    // а на старших курсах в расписании пишутся композитные коды вроде "Т26ВиМИ-Т.РИ42(6993)".
+    final academicGroupRegex = RegExp(
+      r'(?:Т\.[А-Я]{2,4}\d{2}|(?<![А-ЯA-Za-z0-9])[А-Я]{2,4}\d{2}(?![А-ЯA-Za-z0-9]))',
+    );
+    final groupCounts = <String, int>{};
+    final now = DateTime.now();
+    final cutoff = now.subtract(const Duration(days: 200));
+
+    for (final item in rawLessons) {
+      if (item is Map<String, dynamic>) {
+        final dateStr = item['дата'] as String? ?? '';
+        final dt = DateTime.tryParse(dateStr);
+        if (dt != null && dt.isAfter(cutoff)) {
+          final subj = (item['дисциплина'] as String? ?? '').toLowerCase();
+          if (subj.contains('военная кафедра')) continue;
+
+          final rawGroup = item['группа'] as String? ?? '';
+          final matches = academicGroupRegex.allMatches(rawGroup);
+          for (final m in matches) {
+            final grp = m.group(0)!;
+            groupCounts[grp] = (groupCounts[grp] ?? 0) + 1;
+          }
+        }
+      }
+    }
+
+    if (groupCounts.isNotEmpty) {
+      final sorted = groupCounts.entries.toList()..sort((a, b) => b.value.compareTo(a.value));
+      groupName = sorted.first.key;
+    } else {
+      for (final item in rawLessons.reversed) {
+        if (item is Map<String, dynamic>) {
+          final rawGroup = item['группа'] as String? ?? '';
+          final matches = academicGroupRegex.allMatches(rawGroup);
+          for (final m in matches) {
+            final grp = m.group(0)!;
+            groupCounts[grp] = (groupCounts[grp] ?? 0) + 1;
+          }
+          if (groupCounts.isNotEmpty) {
+            final sorted = groupCounts.entries.toList()..sort((a, b) => b.value.compareTo(a.value));
+            groupName = sorted.first.key;
+            break;
+          }
+        }
+      }
+    }
+
     final dateUploading = payload['date_uploading'] as String? ?? infoBlock['dateUploadingRasp'] as String?;
     final warning = fallbackWarning ?? payload['warning'] as String?;
 
