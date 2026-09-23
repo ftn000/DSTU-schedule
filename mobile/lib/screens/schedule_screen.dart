@@ -61,6 +61,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
   void initState() {
     super.initState();
     _initTwoWeeksWindow();
+    _apiService.saveStudentId(widget.studentId);
     _loadSchedule();
   }
 

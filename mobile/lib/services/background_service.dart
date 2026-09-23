@@ -1,4 +1,5 @@
-import 'package:flutter/foundation.dart';
+import 'dart:ui';
+import 'package:flutter/widgets.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:workmanager/workmanager.dart';
 import 'api_service.dart';
@@ -9,12 +10,19 @@ const String backgroundSyncTaskName = 'dstu_schedule_periodic_sync';
 @pragma('vm:entry-point')
 void callbackDispatcher() {
   Workmanager().executeTask((task, inputData) async {
+    DartPluginRegistrant.ensureInitialized();
+    WidgetsFlutterBinding.ensureInitialized();
+
     try {
       final prefs = await SharedPreferences.getInstance();
-      final studentId = prefs.getInt('saved_student_id');
+      var studentId = prefs.getInt('saved_student_id');
       if (studentId == null) {
-        return true;
+        studentId = 347338;
+        await prefs.setInt('saved_student_id', studentId);
       }
+
+      final now = DateTime.now().toIso8601String();
+      await prefs.setString('last_background_sync_at', now);
 
       final apiService = ApiService();
       final notificationService = NotificationService();
@@ -47,14 +55,15 @@ class BackgroundService {
     try {
       await Workmanager().initialize(callbackDispatcher);
 
+      // Минимальный интервал периодического воркера в Android OS составляет 15 минут
       await Workmanager().registerPeriodicTask(
         backgroundSyncTaskName,
         'syncScheduleChangesTask',
-        frequency: const Duration(minutes: 30),
+        frequency: const Duration(minutes: 15),
         constraints: Constraints(
           networkType: NetworkType.connected,
         ),
-        existingWorkPolicy: ExistingPeriodicWorkPolicy.keep,
+        existingWorkPolicy: ExistingPeriodicWorkPolicy.update,
       );
     } catch (e) {
       debugPrint('BackgroundService initialize error: $e');
