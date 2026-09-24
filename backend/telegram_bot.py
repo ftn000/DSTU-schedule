@@ -8,6 +8,7 @@ Telegram-бот для уведомлений и просмотра распис
 """
 
 import os
+import re
 import logging
 import asyncio
 from datetime import datetime, timedelta
@@ -129,6 +130,16 @@ def _format_day_schedule(lessons: List[Dict[str, Any]], title_date: str) -> str:
     return "\n".join(lines).strip()
 
 
+ID_HELP_TEXT = (
+    "❓ <b>Где найти свой ID студента?</b>\n"
+    "1. Перейдите на сайт <a href=\"https://edu.donstu.ru\">edu.donstu.ru</a>\n"
+    "2. Откройте раздел <b>«Расписание»</b>\n"
+    "3. На странице расписания нажмите кнопку <b>«Экспорт»</b> → скопируйте ссылку: "
+    "параметр <code>idStudent=XXXXXX</code> — это и есть ваш 6-значный код "
+    "(можно отправить боту как сам код, так и всю ссылку целиком)."
+)
+
+
 @dp.message(CommandStart())
 async def handle_start(message: types.Message, command: CommandObject):
     """
@@ -148,21 +159,22 @@ async def handle_start(message: types.Message, command: CommandObject):
         # Студент пришел по ссылке из мобилки или ввел ID
         student_id = student_id_arg
         cached = _db.get_schedule(f"student_{student_id}")
-        group_name = _get_student_group_name(student_id, cached["data"] if cached else None)
 
-        _db.subscribe_telegram(chat_id, student_id, username, first_name)
-
-        # Если расписания студента еще нет в базе, фоном загружаем
+        # Если расписания студента еще нет в базе, загружаем
         if not cached:
             loop = asyncio.get_running_loop()
             res = await loop.run_in_executor(None, fetch_schedule, student_id)
-            if res.success:
+            if res.success and res.data:
                 _db.save_schedule(f"student_{student_id}", "student", res.data, res.upload_date)
+                cached = _db.get_schedule(f"student_{student_id}")
+
+        group_name = _get_student_group_name(student_id, cached["data"] if cached else None)
+        _db.subscribe_telegram(chat_id, student_id, username, first_name)
 
         welcome_text = (
             f"🎓 <b>Добро пожаловать в бота расписания ДГТУ!</b>\n\n"
             f"✅ <b>Вы успешно подписаны на обновления:</b>\n"
-            f"• <b>Студент:</b> ID <code>{student_id}</code>\n"
+            f"• <b>ID студента:</b> <code>{student_id}</code>\n"
             f"• <b>Группа:</b> <b>{group_name}</b>\n\n"
             f"🔔 Теперь при любых отменах, переносах пар или сменах аудиторий бот пришлет вам моментальное сообщение со звуком!\n\n"
             f"Используйте кнопки ниже для быстрого просмотра расписания:"
@@ -187,10 +199,12 @@ async def handle_start(message: types.Message, command: CommandObject):
         await message.answer(
             f"👋 Привет, <b>{first_name or 'студент'}</b>!\n\n"
             f"Я бот расписания и уведомлений ДГТУ.\n\n"
-            f"Чтобы подключить моментальные уведомления об отменах и переносах пар:\n"
-            f"1. Нажмите кнопку <b>«Подключить Telegram»</b> в мобильном приложении ДГТУ Расписание.\n"
-            f"2. Или просто <b>отправьте сюда свой номер студенческого / ID</b> (например, <code>347338</code>).",
-            parse_mode=ParseMode.HTML
+            f"Чтобы подключить расписание и моментальные уведомления об отменах и переносах пар:\n"
+            f"1️⃣ Нажмите кнопку <b>«Подключить Telegram-уведомления»</b> в мобильном приложении <b>ДГТУ Расписание</b> (иконка 🔔).\n"
+            f"2️⃣ Или просто <b>отправьте сюда свой ID студента</b> (например, <code>347338</code>).\n\n"
+            f"{ID_HELP_TEXT}",
+            parse_mode=ParseMode.HTML,
+            disable_web_page_preview=True,
         )
 
 
@@ -200,7 +214,13 @@ async def handle_today(message: types.Message):
         return
     sub = _db.get_telegram_subscriber(message.chat.id)
     if not sub or not sub.get("is_active"):
-        await message.answer("⚠️ Вы еще не указали свой номер студента. Отправьте свой ID студента (например, <code>347338</code>).", parse_mode=ParseMode.HTML)
+        await message.answer(
+            f"⚠️ Вы еще не указали свой ID студента.\n"
+            f"Отправьте свой 6-значный ID (например, <code>347338</code>).\n\n"
+            f"{ID_HELP_TEXT}",
+            parse_mode=ParseMode.HTML,
+            disable_web_page_preview=True,
+        )
         return
 
     student_id = sub["student_id"]
@@ -235,7 +255,13 @@ async def handle_tomorrow(message: types.Message):
         return
     sub = _db.get_telegram_subscriber(message.chat.id)
     if not sub or not sub.get("is_active"):
-        await message.answer("⚠️ Вы еще не указали свой номер студента. Отправьте свой ID (например, <code>347338</code>).", parse_mode=ParseMode.HTML)
+        await message.answer(
+            f"⚠️ Вы еще не указали свой ID студента.\n"
+            f"Отправьте свой 6-значный ID (например, <code>347338</code>).\n\n"
+            f"{ID_HELP_TEXT}",
+            parse_mode=ParseMode.HTML,
+            disable_web_page_preview=True,
+        )
         return
 
     student_id = sub["student_id"]
@@ -263,7 +289,13 @@ async def handle_week(message: types.Message):
         return
     sub = _db.get_telegram_subscriber(message.chat.id)
     if not sub or not sub.get("is_active"):
-        await message.answer("⚠️ Вы еще не указали свой номер студента.", parse_mode=ParseMode.HTML)
+        await message.answer(
+            f"⚠️ Вы еще не указали свой ID студента.\n"
+            f"Отправьте свой 6-значный ID (например, <code>347338</code>).\n\n"
+            f"{ID_HELP_TEXT}",
+            parse_mode=ParseMode.HTML,
+            disable_web_page_preview=True,
+        )
         return
 
     student_id = sub["student_id"]
@@ -310,7 +342,13 @@ async def handle_subscription_info(message: types.Message):
         return
     sub = _db.get_telegram_subscriber(message.chat.id)
     if not sub or not sub.get("is_active"):
-        await message.answer("У вас нет активной подписки. Отправьте свой номер ID студента.", parse_mode=ParseMode.HTML)
+        await message.answer(
+            f"У вас нет активной подписки.\n"
+            f"Отправьте свой 6-значный ID студента (например, <code>347338</code>).\n\n"
+            f"{ID_HELP_TEXT}",
+            parse_mode=ParseMode.HTML,
+            disable_web_page_preview=True,
+        )
         return
 
     student_id = sub["student_id"]
@@ -327,9 +365,10 @@ async def handle_subscription_info(message: types.Message):
         f"• <b>ID студента:</b> <code>{student_id}</code>\n"
         f"• <b>Академическая группа:</b> <b>{group_name}</b>\n"
         f"• <b>Статус:</b> 🟢 Активна (пуши включены)\n\n"
-        f"Чтобы переключиться на другого студента, просто отправьте сюда новый ID."
+        f"Чтобы переключиться на другого студента, просто отправьте сюда новый ID.\n\n"
+        f"{ID_HELP_TEXT}"
     )
-    await message.answer(text, parse_mode=ParseMode.HTML, reply_markup=keyboard)
+    await message.answer(text, parse_mode=ParseMode.HTML, reply_markup=keyboard, disable_web_page_preview=True)
 
 
 @dp.callback_query(F.data == "unsubscribe")
@@ -338,30 +377,58 @@ async def handle_callback_unsubscribe(call: types.CallbackQuery):
         return
     _db.unsubscribe_telegram(call.message.chat.id)
     await call.message.edit_text(
-        "❌ <b>Вы отписались от уведомлений.</b>\n\nЧтобы снова включить их, отправьте свой ID студента или команду /start.",
-        parse_mode=ParseMode.HTML
+        f"❌ <b>Вы отписались от уведомлений.</b>\n\n"
+        f"Чтобы снова включить их, отправьте свой ID студента или команду /start.\n\n"
+        f"{ID_HELP_TEXT}",
+        parse_mode=ParseMode.HTML,
+        disable_web_page_preview=True,
     )
     await call.answer("Уведомления отключены")
 
 
-@dp.message(F.text.regexp(r"^\d{4,8}$"))
+@dp.message(F.text)
 async def handle_student_id_input(message: types.Message):
-    """Если студент просто прислал числовой ID (например, 347338)."""
-    if _db is None:
+    """Обработка ввода числового ID (например, 347338) или ссылки с edu.donstu.ru (idStudent=347338)."""
+    if _db is None or not message.text:
         return
-    student_id = message.text.strip()
+    raw_text = message.text.strip()
+
+    # Извлекаем ID либо из ссылки idStudent=XXXXXX, либо из чистого числа
+    match_url = re.search(r"idStudent=(\d{4,8})", raw_text, re.IGNORECASE)
+    if match_url:
+        student_id = match_url.group(1)
+    elif re.match(r"^\d{4,8}$", raw_text):
+        student_id = raw_text
+    else:
+        await message.answer(
+            f"🤔 Я не распознал команду или ID студента.\n"
+            f"Пожалуйста, отправьте ваш 6-значный <b>ID студента</b> (только цифры, например <code>347338</code>) "
+            f"или ссылку экспорта с сайта ДГТУ.\n\n"
+            f"{ID_HELP_TEXT}",
+            parse_mode=ParseMode.HTML,
+            disable_web_page_preview=True,
+        )
+        return
+
     chat_id = message.chat.id
     username = message.from_user.username
     first_name = message.from_user.first_name
 
     cached = _db.get_schedule(f"student_{student_id}")
+    if not cached:
+        loop = asyncio.get_running_loop()
+        res = await loop.run_in_executor(None, fetch_schedule, student_id)
+        if res.success and res.data:
+            _db.save_schedule(f"student_{student_id}", "student", res.data, res.upload_date)
+            cached = _db.get_schedule(f"student_{student_id}")
+
     group_name = _get_student_group_name(student_id, cached["data"] if cached else None)
 
     _db.subscribe_telegram(chat_id, student_id, username, first_name)
 
     await message.answer(
-        f"✅ <b>ID успешно обновлен!</b>\n\n"
-        f"• <b>Студент:</b> ID <code>{student_id}</code>\n"
+        f"✅ <b>ID успешно подключен!</b>\n\n"
+        f"• <b>ID студента:</b> <code>{student_id}</code>\n"
         f"• <b>Группа:</b> <b>{group_name}</b>\n\n"
         f"Уведомления об изменениях расписания будут приходить сюда моментально!",
         parse_mode=ParseMode.HTML,
