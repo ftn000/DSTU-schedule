@@ -48,6 +48,10 @@ _load_env_file()
 
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 APP_REDIRECT_URL = os.getenv("APP_REDIRECT_URL", "http://localhost:8000/app")
+APK_DOWNLOAD_URL = os.getenv(
+    "APK_DOWNLOAD_URL",
+    APP_REDIRECT_URL.replace("/app", "/download/DSTU-schedule.apk"),
+)
 
 bot = Bot(token=BOT_TOKEN) if BOT_TOKEN else None
 dp = Dispatcher()
@@ -68,6 +72,15 @@ def get_main_keyboard() -> ReplyKeyboardMarkup:
             [KeyboardButton(text="🗓 Вся неделя"), KeyboardButton(text="⚙️ Моя подписка")],
         ],
         resize_keyboard=True,
+    )
+
+
+def get_apk_download_keyboard() -> InlineKeyboardMarkup:
+    """Inline-кнопка для прямого скачивания APK-файла приложения."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="📥 Скачать приложение (.APK)", url=APK_DOWNLOAD_URL)]
+        ]
     )
 
 
@@ -200,11 +213,13 @@ async def handle_start(message: types.Message, command: CommandObject):
             f"👋 Привет, <b>{first_name or 'студент'}</b>!\n\n"
             f"Я бот расписания и уведомлений ДГТУ.\n\n"
             f"Чтобы подключить расписание и моментальные уведомления об отменах и переносах пар:\n"
-            f"1️⃣ Нажмите кнопку <b>«Подключить Telegram-уведомления»</b> в мобильном приложении <b>ДГТУ Расписание</b> (иконка 🔔).\n"
+            f"1️⃣ Нажмите кнопку <b>«Подключить Telegram-уведомления»</b> в мобильном приложении "
+            f"<a href=\"{APK_DOWNLOAD_URL}\"><b>ДГТУ Расписание (скачать .APK)</b></a> (иконка 🔔).\n"
             f"2️⃣ Или просто <b>отправьте сюда свой ID студента</b> (например, <code>347338</code>).\n\n"
             f"{ID_HELP_TEXT}",
             parse_mode=ParseMode.HTML,
             disable_web_page_preview=True,
+            reply_markup=get_apk_download_keyboard(),
         )
 
 
@@ -220,6 +235,7 @@ async def handle_today(message: types.Message):
             f"{ID_HELP_TEXT}",
             parse_mode=ParseMode.HTML,
             disable_web_page_preview=True,
+            reply_markup=get_apk_download_keyboard(),
         )
         return
 
@@ -261,6 +277,7 @@ async def handle_tomorrow(message: types.Message):
             f"{ID_HELP_TEXT}",
             parse_mode=ParseMode.HTML,
             disable_web_page_preview=True,
+            reply_markup=get_apk_download_keyboard(),
         )
         return
 
@@ -295,6 +312,7 @@ async def handle_week(message: types.Message):
             f"{ID_HELP_TEXT}",
             parse_mode=ParseMode.HTML,
             disable_web_page_preview=True,
+            reply_markup=get_apk_download_keyboard(),
         )
         return
 
@@ -348,6 +366,7 @@ async def handle_subscription_info(message: types.Message):
             f"{ID_HELP_TEXT}",
             parse_mode=ParseMode.HTML,
             disable_web_page_preview=True,
+            reply_markup=get_apk_download_keyboard(),
         )
         return
 
@@ -356,8 +375,9 @@ async def handle_subscription_info(message: types.Message):
     group_name = _get_student_group_name(student_id, cached["data"] if cached else None)
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📲 Открыть приложение", url=f"{APP_REDIRECT_URL}?student_id={student_id}")],
+        [InlineKeyboardButton(text="📥 Скачать приложение (.APK)", url=APK_DOWNLOAD_URL)],
         [InlineKeyboardButton(text="❌ Отписаться от уведомлений", callback_data="unsubscribe")],
-        [InlineKeyboardButton(text="📲 Открыть приложение", url=f"{APP_REDIRECT_URL}?student_id={student_id}")]
     ])
 
     text = (
@@ -382,6 +402,7 @@ async def handle_callback_unsubscribe(call: types.CallbackQuery):
         f"{ID_HELP_TEXT}",
         parse_mode=ParseMode.HTML,
         disable_web_page_preview=True,
+        reply_markup=get_apk_download_keyboard(),
     )
     await call.answer("Уведомления отключены")
 
@@ -407,6 +428,7 @@ async def handle_student_id_input(message: types.Message):
             f"{ID_HELP_TEXT}",
             parse_mode=ParseMode.HTML,
             disable_web_page_preview=True,
+            reply_markup=get_apk_download_keyboard(),
         )
         return
 

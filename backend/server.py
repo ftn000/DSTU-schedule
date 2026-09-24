@@ -8,6 +8,7 @@ REST API сервер на FastAPI с интегрированным фонов�
 4. Фоновый опрос API ДГТУ по расписанию (раз в 30-60 минут) с выявлением диффов.
 """
 
+import os
 import sys
 import logging
 import asyncio
@@ -15,7 +16,7 @@ from typing import Optional, List, Dict, Any
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -381,6 +382,21 @@ async def reset_simulation(student_id: int):
     return {"status": "ok", "message": "Симуляция сброшена, расписание восстановлено из ДГТУ"}
 
 
+@app.api_route("/download/DSTU-schedule.apk", methods=["GET", "HEAD"])
+async def download_apk():
+    """Прямое скачивание актуального APK-файла мобильного приложения."""
+    apk_path = os.path.join(os.path.dirname(__file__), "DSTU-schedule.apk")
+    if not os.path.exists(apk_path):
+        apk_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "DSTU-schedule.apk")
+    if not os.path.exists(apk_path):
+        raise HTTPException(status_code=404, detail="APK-файл временно недоступен на сервере")
+    return FileResponse(
+        path=apk_path,
+        filename="DSTU-schedule.apk",
+        media_type="application/vnd.android.package-archive",
+    )
+
+
 @app.get("/app", response_class=HTMLResponse)
 async def open_in_mobile_app(
     student_id: Optional[str] = Query(None),
@@ -423,7 +439,7 @@ async def open_in_mobile_app(
             border: 1px solid rgba(255, 255, 255, 0.08);
         }}
         .btn {{
-            display: inline-block;
+            display: block;
             background-color: #2563eb;
             color: white;
             text-decoration: none;
@@ -431,8 +447,20 @@ async def open_in_mobile_app(
             border-radius: 12px;
             font-weight: 600;
             font-size: 16px;
-            margin-top: 24px;
+            margin-top: 20px;
             box-shadow: 0 4px 14px rgba(37, 99, 235, 0.4);
+        }}
+        .btn-secondary {{
+            display: block;
+            background-color: rgba(255, 255, 255, 0.08);
+            color: #e2e8f0;
+            text-decoration: none;
+            padding: 12px 24px;
+            border-radius: 12px;
+            font-weight: 500;
+            font-size: 14px;
+            margin-top: 12px;
+            border: 1px solid rgba(255, 255, 255, 0.14);
         }}
     </style>
 </head>
@@ -444,8 +472,9 @@ async def open_in_mobile_app(
             Открываем расписание в установленном приложении...
         </p>
         <a href="{deep_link}" class="btn">📲 Открыть приложение</a>
-        <p style="font-size: 12px; color: #64748b; margin-top: 28px;">
-            Если приложение не открылось автоматически, нажмите кнопку выше.
+        <a href="/download/DSTU-schedule.apk" class="btn-secondary">📥 Скачать приложение (.APK)</a>
+        <p style="font-size: 12px; color: #64748b; margin-top: 24px;">
+            Если приложение не открылось автоматически, нажмите кнопку выше или скачайте APK.
         </p>
     </div>
 </body>
@@ -456,3 +485,4 @@ async def open_in_mobile_app(
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("server:app", host="0.0.0.0", port=8000, reload=True)
+
