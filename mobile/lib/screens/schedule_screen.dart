@@ -5,6 +5,7 @@ import '../models/lesson.dart';
 import '../services/api_service.dart';
 import '../services/notification_service.dart';
 import '../widgets/lesson_card.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'login_screen.dart';
 
 class ScheduleScreen extends StatefulWidget {
@@ -482,33 +483,56 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                             ),
                     ),
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                       decoration: BoxDecoration(
                         color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
                         border: Border(top: BorderSide(color: theme.dividerColor.withValues(alpha: 0.15))),
                       ),
-                      child: SizedBox(
-                        width: double.infinity,
-                        child: OutlinedButton.icon(
-                          onPressed: () async {
-                            await _notificationService.showTestNotification();
-                            if (context.mounted) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(
-                                  content: Text('🔔 Тестовое уведомление отправлено в шторку Android! Проверьте верхнюю панель.'),
-                                  behavior: SnackBarBehavior.floating,
-                                  duration: Duration(seconds: 3),
-                                ),
-                              );
-                            }
-                          },
-                          icon: const Icon(Icons.notifications_active_outlined, size: 18),
-                          label: const Text('Тест уведомления в шторку Android', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
-                          style: OutlinedButton.styleFrom(
-                            padding: const EdgeInsets.symmetric(vertical: 12),
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          SizedBox(
+                            width: double.infinity,
+                            child: ElevatedButton.icon(
+                              onPressed: _openTelegramBot,
+                              icon: const Icon(Icons.send_rounded, size: 18, color: Colors.white),
+                              label: const Text(
+                                'Подключить Telegram-уведомления',
+                                style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Colors.white),
+                              ),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: const Color(0xFF229ED9),
+                                padding: const EdgeInsets.symmetric(vertical: 12),
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                                elevation: 0,
+                              ),
+                            ),
                           ),
-                        ),
+                          const SizedBox(height: 8),
+                          SizedBox(
+                            width: double.infinity,
+                            child: OutlinedButton.icon(
+                              onPressed: () async {
+                                await _notificationService.showTestNotification();
+                                if (context.mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(
+                                      content: Text('🔔 Тестовое уведомление отправлено в шторку Android! Проверьте верхнюю панель.'),
+                                      behavior: SnackBarBehavior.floating,
+                                      duration: Duration(seconds: 3),
+                                    ),
+                                  );
+                                }
+                              },
+                              icon: const Icon(Icons.notifications_active_outlined, size: 18),
+                              label: const Text('Тест уведомления в шторку Android', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                              style: OutlinedButton.styleFrom(
+                                padding: const EdgeInsets.symmetric(vertical: 12),
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ],
@@ -519,6 +543,24 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
         );
       },
     );
+  }
+
+  Future<void> _openTelegramBot() async {
+    const botUsername = AppConfig.telegramBotUsername;
+    final url = Uri.parse('https://t.me/$botUsername?start=${widget.studentId}');
+    try {
+      if (await canLaunchUrl(url)) {
+        await launchUrl(url, mode: LaunchMode.externalApplication);
+      } else {
+        await launchUrl(url, mode: LaunchMode.platformDefault);
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Не удалось открыть Telegram: $e')),
+        );
+      }
+    }
   }
 
   Future<void> _handleSwitchStudent() async {
