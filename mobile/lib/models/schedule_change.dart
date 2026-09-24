@@ -61,6 +61,8 @@ class ScheduleChange {
         return 'Аудитория изменена';
       case 'TEACHER_CHANGED':
         return 'Преподаватель изменен';
+      case 'TIME_CHANGED':
+        return 'Время изменено';
       case 'ADDED':
       case 'NEW':
         return 'Пара добавлена';
@@ -74,9 +76,11 @@ class ScheduleChange {
       case 'CANCELLED':
         return '🚫';
       case 'ROOM_CHANGED':
-        return '⚠️';
+        return '📍';
       case 'TEACHER_CHANGED':
         return '👤';
+      case 'TIME_CHANGED':
+        return '⏰';
       case 'ADDED':
       case 'NEW':
         return '➕';

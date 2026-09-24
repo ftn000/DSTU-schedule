@@ -758,7 +758,21 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
       return l.rawDate.startsWith(_selectedDate);
     }).toList() ?? [];
 
-    currentDayLessons.sort((a, b) => a.lessonNum.compareTo(b.lessonNum));
+    currentDayLessons.sort((a, b) {
+      final numCmp = a.lessonNum.compareTo(b.lessonNum);
+      if (numCmp != 0) return numCmp;
+      if (a.isCancelled != b.isCancelled) {
+        return a.isCancelled ? -1 : 1; // отмененная пара всегда идет первой (слева)
+      }
+      return a.id.compareTo(b.id);
+    });
+
+    // Группируем пары по временному слоту (номеру пары)
+    final Map<int, List<Lesson>> slotGroups = {};
+    for (final l in currentDayLessons) {
+      slotGroups.putIfAbsent(l.lessonNum, () => []).add(l);
+    }
+    final sortedSlots = slotGroups.keys.toList()..sort();
 
     return Column(
       children: [
@@ -890,7 +904,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
             },
             child: RefreshIndicator(
               onRefresh: () => _loadSchedule(forceRefresh: true),
-              child: currentDayLessons.isEmpty
+              child: sortedSlots.isEmpty
                   ? Center(
                       child: SingleChildScrollView(
                         physics: const AlwaysScrollableScrollPhysics(),
@@ -918,9 +932,97 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                     )
                   : ListView.builder(
                       padding: const EdgeInsets.symmetric(vertical: 8),
-                      itemCount: currentDayLessons.length,
+                      itemCount: sortedSlots.length,
                       itemBuilder: (context, index) {
-                        return LessonCard(lesson: currentDayLessons[index]);
+                        final slotNum = sortedSlots[index];
+                        final slotLessons = slotGroups[slotNum]!;
+
+                        // Одиночная пара в слоте -> полноразмерная карточка
+                        if (slotLessons.length == 1) {
+                          return LessonCard(lesson: slotLessons.first);
+                        }
+
+                        // Две пары в одном слоте (например, одна отменена, а вторая добавлена)
+                        // Делим ячейку пары пополам и размещаем 2 карточки рядом!
+                        if (slotLessons.length == 2) {
+                          final hasCancelled = slotLessons.any((l) => l.isCancelled);
+                          final first = slotLessons.first;
+
+                          return Container(
+                            margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                            decoration: BoxDecoration(
+                              color: theme.colorScheme.surface,
+                              borderRadius: BorderRadius.circular(16),
+                              border: Border.all(
+                                color: hasCancelled 
+                                    ? Colors.redAccent.withValues(alpha: 0.3)
+                                    : theme.dividerColor.withValues(alpha: 0.25),
+                                width: 1.0,
+                              ),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.black.withValues(alpha: 0.02),
+                                  blurRadius: 6,
+                                  offset: const Offset(0, 2),
+                                )
+                              ],
+                            ),
+                            padding: const EdgeInsets.all(12),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  children: [
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                      decoration: BoxDecoration(
+                                        color: hasCancelled
+                                            ? Colors.redAccent.withValues(alpha: 0.12)
+                                            : theme.colorScheme.primaryContainer.withValues(alpha: 0.5),
+                                        borderRadius: BorderRadius.circular(6),
+                                      ),
+                                      child: Text(
+                                        '${first.lessonNum} ПАРА • ${first.startTime} - ${first.endTime}',
+                                        style: TextStyle(
+                                          fontSize: 11,
+                                          fontWeight: FontWeight.bold,
+                                          color: hasCancelled ? Colors.redAccent : theme.colorScheme.primary,
+                                        ),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Text(
+                                      hasCancelled ? 'Замена в слоте' : '2 подгруппы',
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        fontStyle: FontStyle.italic,
+                                        color: theme.textTheme.bodySmall?.color?.withValues(alpha: 0.7),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 10),
+                                Row(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Expanded(
+                                      child: LessonCard(lesson: slotLessons[0], isSplit: true),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Expanded(
+                                      child: LessonCard(lesson: slotLessons[1], isSplit: true),
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            ),
+                          );
+                        }
+
+                        // Если больше 2 пар (редкий случай нескольких подгрупп)
+                        return Column(
+                          children: slotLessons.map((l) => LessonCard(lesson: l)).toList(),
+                        );
                       },
                     ),
             ),
@@ -1257,7 +1359,33 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
     final typeColor = _getLessonTypeColor(lesson.lessonType);
     final isCancelled = lesson.isCancelled;
     final isRoomChanged = lesson.isRoomChanged;
-    final accentColor = isCancelled ? Colors.redAccent : typeColor;
+    final isTeacherChanged = lesson.isTeacherChanged;
+    final isTimeChanged = lesson.isTimeChanged;
+    final isNew = lesson.isNew;
+
+    Color accentColor;
+    Color cardBgColor;
+    if (isCancelled) {
+      accentColor = Colors.redAccent;
+      cardBgColor = Colors.redAccent.withValues(alpha: 0.06);
+    } else if (isNew) {
+      accentColor = Colors.green.shade600;
+      cardBgColor = Colors.green.withValues(alpha: 0.06);
+    } else if (isRoomChanged) {
+      accentColor = Colors.amber.shade700;
+      cardBgColor = Colors.amber.withValues(alpha: 0.08);
+    } else if (isTeacherChanged) {
+      accentColor = Colors.purple.shade600;
+      cardBgColor = Colors.purple.withValues(alpha: 0.06);
+    } else if (isTimeChanged) {
+      accentColor = Colors.teal.shade600;
+      cardBgColor = Colors.teal.withValues(alpha: 0.06);
+    } else {
+      accentColor = typeColor;
+      cardBgColor = theme.colorScheme.surface;
+    }
+
+    final hasChange = isRoomChanged || isTeacherChanged || isTimeChanged || isNew;
 
     return Container(
       margin: const EdgeInsets.symmetric(vertical: 4),
@@ -1268,27 +1396,23 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
           borderRadius: BorderRadius.circular(10),
           child: Container(
             decoration: BoxDecoration(
-              color: isCancelled
-                  ? Colors.redAccent.withValues(alpha: 0.06)
-                  : (isRoomChanged
-                      ? Colors.amber.withValues(alpha: 0.08)
-                      : theme.colorScheme.surface),
+              color: cardBgColor,
               borderRadius: BorderRadius.circular(10),
               border: Border(
                 left: BorderSide(color: accentColor, width: 3.5),
                 top: BorderSide(
-                  color: isRoomChanged
-                      ? Colors.amber.shade600
+                  color: hasChange
+                      ? accentColor.withValues(alpha: 0.6)
                       : theme.dividerColor.withValues(alpha: 0.18),
                 ),
                 right: BorderSide(
-                  color: isRoomChanged
-                      ? Colors.amber.shade600
+                  color: hasChange
+                      ? accentColor.withValues(alpha: 0.6)
                       : theme.dividerColor.withValues(alpha: 0.18),
                 ),
                 bottom: BorderSide(
-                  color: isRoomChanged
-                      ? Colors.amber.shade600
+                  color: hasChange
+                      ? accentColor.withValues(alpha: 0.6)
                       : theme.dividerColor.withValues(alpha: 0.18),
                 ),
               ),
@@ -1318,8 +1442,14 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                     ),
                     if (isCancelled)
                       const Text('🚫', style: TextStyle(fontSize: 10))
+                    else if (isNew)
+                      const Text('➕', style: TextStyle(fontSize: 10))
                     else if (isRoomChanged)
-                      const Text('⚠️', style: TextStyle(fontSize: 10)),
+                      const Text('📍', style: TextStyle(fontSize: 10))
+                    else if (isTeacherChanged)
+                      const Text('👤', style: TextStyle(fontSize: 10))
+                    else if (isTimeChanged)
+                      const Text('⏰', style: TextStyle(fontSize: 10)),
                   ],
                 ),
                 const SizedBox(height: 4),
