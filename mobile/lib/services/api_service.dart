@@ -98,26 +98,41 @@ class ApiService {
 
   // --- Загрузка расписания ---
 
+  /// Быстрое чтение локального кэша с телефона (для мгновенного старта до ответа сервера)
+  Future<ScheduleResponse?> getCachedSchedule(int studentId) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final localJson = prefs.getString(_getCacheKey(studentId));
+      if (localJson != null) {
+        final decoded = json.decode(localJson);
+        return _parseSchedulePayload(decoded, isFromCache: true);
+      }
+    } catch (_) {}
+    return null;
+  }
+
   Future<ScheduleResponse> getSchedule(int studentId, {bool forceRefresh = false}) async {
     final prefs = await SharedPreferences.getInstance();
     final cacheKey = _getCacheKey(studentId);
 
-    // 1. Попытка запросить наш бэкенд (если запущен)
+    // 1. Попытка запросить наш бэкенд-сервер
     try {
       final url = Uri.parse('$baseUrl/api/schedule/$studentId?force_refresh=$forceRefresh');
-      final response = await http.get(url).timeout(const Duration(seconds: 4));
+      final response = await http.get(url).timeout(const Duration(seconds: 6));
 
       if (response.statusCode == 200) {
         final decoded = json.decode(utf8.decode(response.bodyBytes));
         await prefs.setString(cacheKey, response.body);
-        return _parseSchedulePayload(decoded, isFromCache: decoded['source'] == 'cache');
+        // Если сервер ответил успешно — данные актуальны (isFromCache = false),
+        // кроме случая аварийного фоллбэка при падении самого сайта ДГТУ.
+        final isFallback = decoded['source'] == 'cache_fallback';
+        return _parseSchedulePayload(decoded, isFromCache: isFallback);
       }
     } catch (_) {
-      // Ошибка сети или бэкенд на ПК выключен
+      // Ошибка сети или сервер недоступен
     }
 
-    // 2. Если локальный бэкенд недоступен (на реальном телефоне вне дома),
-    // обращаемся напрямую к официальному API ДГТУ
+    // 2. Если наш бэкенд недоступен, обращаемся напрямую к официальному API ДГТУ
     try {
       final directUrl = Uri.parse('https://edu.donstu.ru/api/Rasp?idStudent=$studentId');
       final directResponse = await http.get(directUrl).timeout(const Duration(seconds: 10));
@@ -358,6 +373,8 @@ class ApiService {
         .map((ch) => ScheduleChange.fromJson(ch as Map<String, dynamic>))
         .toList();
 
+    _refineLessonTypesByStreamContext(lessons);
+
     return ScheduleResponse(
       lessons: lessons,
       groupName: groupName,
@@ -366,5 +383,98 @@ class ApiService {
       isFromCache: isFromCache,
       changes: parsedChanges,
     );
+  }
+
+  /// Контекстное уточнение типов занятий (Лекция / Практика) по структуре потоков дисциплины:
+  /// 1. Если в один день по одному предмету стоят 2 пары подряд с одной и той же темой/цветом
+  ///    (и в теме нет явного слова «Лекция»), это сдвоенный практический блок -> Практика.
+  /// 2. Если у дисциплины в семестре ровно 2 основных цвета потоков, и один из них является
+  ///    практическим (сдвоенные пары / повтор тем), а второй — одиночные пары с уникальными темами,
+  ///    то второй цвет маркируется как Лекция.
+  void _refineLessonTypesByStreamContext(List<Lesson> lessons) {
+    final active = lessons.where((l) => !l.isCancelled).toList();
+
+    // 1. Сдвоенные пары в один день с одинаковой темой и цветом -> Практика
+    final byDayAndSubj = <String, List<Lesson>>{};
+    for (final l in active) {
+      final dateKey = l.rawDate.split('T')[0];
+      final key = '${dateKey}_${l.subject.toLowerCase()}';
+      byDayAndSubj.putIfAbsent(key, () => []).add(l);
+    }
+
+    final practiceStreamColorsBySubj = <String, Set<String>>{};
+    for (final group in byDayAndSubj.values) {
+      if (group.length >= 2) {
+        final first = group.first;
+        final sameTheme = group.every((l) => (l.theme ?? '') == (first.theme ?? ''));
+        final sameColor = group.every((l) => (l.color ?? '') == (first.color ?? ''));
+        final themeLower = (first.theme ?? '').toLowerCase();
+        final isExplicitLecture = themeLower.contains('лекция') || themeLower.contains('лек.');
+        if (sameTheme && sameColor && !isExplicitLecture) {
+          for (final l in group) {
+            if (l.lessonType == 'Лекция') {
+              l.lessonType = 'Практика';
+            }
+          }
+          final subjKey = '${first.academicYear ?? ''}_${first.subject.toLowerCase()}';
+          final col = (first.color ?? '').toLowerCase();
+          if (col.isNotEmpty) {
+            practiceStreamColorsBySubj.putIfAbsent(subjKey, () => {}).add(col);
+          }
+        }
+      }
+    }
+
+    // 2. Анализ парных потоков (цвет лекций vs цвет практик) внутри одной дисциплины семестра
+    final bySemSubj = <String, List<Lesson>>{};
+    for (final l in active) {
+      final subjKey = '${l.academicYear ?? ''}_${l.subject.toLowerCase()}';
+      bySemSubj.putIfAbsent(subjKey, () => []).add(l);
+    }
+
+    for (final entry in bySemSubj.entries) {
+      final subjKey = entry.key;
+      final subjLessons = entry.value;
+      if (subjLessons.first.subject.toLowerCase().contains('профильный проект')) continue;
+
+      final byColor = <String, List<Lesson>>{};
+      for (final l in subjLessons) {
+        final col = (l.color ?? '').toLowerCase();
+        if (col.isEmpty || col == '#ef5350' || col == '#004c3e') continue;
+        byColor.putIfAbsent(col, () => []).add(l);
+      }
+
+      if (byColor.length == 2) {
+        final colors = byColor.keys.toList();
+        final c1 = colors[0];
+        final c2 = colors[1];
+        final knownPrac = practiceStreamColorsBySubj[subjKey] ?? {};
+
+        String? pracColor;
+        String? lecColor;
+        if (knownPrac.contains(c1) && !knownPrac.contains(c2)) {
+          pracColor = c1;
+          lecColor = c2;
+        } else if (knownPrac.contains(c2) && !knownPrac.contains(c1)) {
+          pracColor = c2;
+          lecColor = c1;
+        }
+
+        if (pracColor != null && lecColor != null) {
+          for (final l in byColor[pracColor]!) {
+            final tLow = (l.theme ?? '').toLowerCase();
+            if (!tLow.contains('лекция')) {
+              l.lessonType = 'Практика';
+            }
+          }
+          for (final l in byColor[lecColor]!) {
+            final tLow = (l.theme ?? '').toLowerCase();
+            if (!tLow.contains('практика') && !tLow.contains('работа над')) {
+              l.lessonType = 'Лекция';
+            }
+          }
+        }
+      }
+    }
   }
 }

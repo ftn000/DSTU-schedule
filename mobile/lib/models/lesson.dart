@@ -10,7 +10,7 @@ class Lesson {
   final String rawDate;
   final int dayOfWeek;
   final String? group;
-  final String lessonType;
+  String lessonType;
   final String? academicYear;
   final String? theme;
   final String? color;
@@ -56,12 +56,23 @@ class Lesson {
     caseSensitive: false
   );
 
+  static final _explicitLectureThemeRegex = RegExp(
+    r'(?:^|[\s,.;:()])(лекция|лекц\.|лек\.)(?:$|[\s,.;:()0-9])|^тема\s*\d+',
+    caseSensitive: false,
+  );
+
+  static final _explicitPracticeThemeRegex = RegExp(
+    r'(?:^|[\s,.;:()])(практика|практическое|практикум|пр\.|кср)(?:$|[\s,.;:()0-9])',
+    caseSensitive: false,
+  );
+
   static String detectLessonType(String originalSubject, String? theme, {String? color}) {
     final s = originalSubject.trim();
+    final sLower = s.toLowerCase();
     final t = (theme ?? '').trim().toLowerCase();
     final c = (color ?? '').trim().toLowerCase();
 
-    // 1. Проверяем префикс в самом названии предмета (лек, пр, лаб и т.д.)
+    // 1. Проверяем явный префикс в самом названии предмета (лек, пр, лаб и т.д.)
     final match = _typePrefixRegex.firstMatch(s);
     if (match != null) {
       final prefix = match.group(1)!.toLowerCase();
@@ -76,55 +87,91 @@ class Lesson {
       }
     }
 
-    // 2. В ДГТУ в поле 'тема' (theme) часто указывается конкретный тип занятия
-    if (t.contains('лекция') || t.contains('лекц') || t.contains('лек.') || t.startsWith('лек ')) {
+    // 2. Явное указание типа занятия в поле 'тема' (theme)
+    if (_explicitLectureThemeRegex.hasMatch(t)) {
       return 'Лекция';
     }
-    if (t.contains('практика') || t.contains('практ') || t.startsWith('пр ') || t.startsWith('пр.')) {
+    if (_explicitPracticeThemeRegex.hasMatch(t)) {
       return 'Практика';
     }
     if (t.contains('лаборатор') || t.startsWith('лаб')) return 'Лабораторная';
     if (t.contains('семинар')) return 'Семинар';
-    if (t.contains('зачет')) return 'Зачет';
-    if (t.contains('экзамен')) return 'Экзамен';
-    if (t.contains('защита')) return 'Защита';
-    if (t.contains('консультация')) return 'Консультация';
+    if (t.startsWith('зачет') || t.startsWith('зачёт') || t == 'зачет') return 'Зачет';
+    if (t.startsWith('экзамен') || t == 'экзамен') return 'Экзамен';
+    if (t.startsWith('защита') || t.startsWith('предзащита') || t.startsWith('открытая защита')) return 'Защита';
+    if (t.startsWith('консультация') || sLower.startsWith('консультация')) return 'Консультация';
 
-    // 3. Анализ по системному цвету события в расписании ДГТУ:
-    // В ДГТУ цвет ячейки расписания жестко привязан к типу:
-    // #4caf50 (зеленый), #008000, #ab47bc — это Лекции
-    // #5c6bc0 (индиго), #2196f3 (синий), #009688 — это Практики
-    // #004c3e — Лабораторные
-    if (c == '#4caf50' || c == '#008000' || c == '#ab47bc') {
+    // 3. Профильный проект всегда является практическим занятием
+    if (sLower.contains('профильный проект')) {
+      return 'Практика';
+    }
+
+    // 4. Прикладные маркеры практики в названии темы занятия
+    if (t.contains('работа над') ||
+        t.contains('работа с') ||
+        t.contains('работа по') ||
+        t.contains('кейс') ||
+        t.contains('воркшоп') ||
+        t.contains('мастер-слайд') ||
+        t.contains('мастер-класс') ||
+        t.contains('плейтест') ||
+        t.contains('разработка') ||
+        t.contains('сборка') ||
+        t.contains('моделирование') ||
+        t.contains('расчет') ||
+        t.contains('расчёт') ||
+        t.contains('решение задач') ||
+        t.contains('поиск и анализ') ||
+        t.contains('пакет конкурсной')) {
+      return 'Практика';
+    }
+
+    // 5. Анализ по системному цвету потока в ДГТУ / Modeus:
+    // #4caf50 (зеленый), #008000 — поток лекций
+    // #5c6bc0, #2196f3, #009688, #ff9800, #ab47bc, #fdd017, #44c8c8 — поток практик
+    // #004c3e — лабораторные работы, #ef5350 — контрольные точки / зачеты
+    if (c == '#4caf50' || c == '#008000') {
       return 'Лекция';
     }
-    if (c == '#5c6bc0' || c == '#2196f3' || c == '#009688') {
+    if (c == '#5c6bc0' ||
+        c == '#2196f3' ||
+        c == '#009688' ||
+        c == '#ff9800' ||
+        c == '#ab47bc' ||
+        c == '#fdd017' ||
+        c == '#44c8c8') {
       return 'Практика';
     }
     if (c == '#004c3e') {
       return 'Лабораторная';
     }
-
-    // 4. Анализ темы на прикладной характер
-    if (t.contains('кейс') || 
-        t.contains('воркшоп') || 
-        t.contains('работа над') || 
-        t.contains('работа с')) {
-      return 'Практика';
+    if (c == '#ef5350') {
+      return 'Зачет';
     }
 
-    // 5. Если в поле 'тема' указано содержательное теоретическое название лекции
+    // 6. Теоретические названия лекционных тем
     if (t.isNotEmpty && (
-        t.startsWith('введение') || 
-        t.startsWith('основы') || 
-        t.startsWith('теория') || 
-        t.startsWith('история') || 
-        t.startsWith('архитектура')
+        t.startsWith('введение') ||
+        t.startsWith('основы') ||
+        t.startsWith('теория') ||
+        t.startsWith('история') ||
+        t.startsWith('архитектура') ||
+        t.startsWith('проектная документация') ||
+        t.startsWith('отчеты о нир') ||
+        t.startsWith('оформление научных') ||
+        t.startsWith('визуализация результатов') ||
+        t.startsWith('принципы') ||
+        t.startsWith('методология') ||
+        t.startsWith('современные тренды') ||
+        t.startsWith('проблемы защиты') ||
+        t.startsWith('особенности реализации') ||
+        t.startsWith('обучение с подкреплением') ||
+        t.startsWith('процедурная генерация')
     )) {
       return 'Лекция';
     }
 
-    // 6. По умолчанию считаем практикой
+    // 7. По умолчанию считаем практикой
     return 'Практика';
   }
 

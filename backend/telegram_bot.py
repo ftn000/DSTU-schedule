@@ -103,6 +103,104 @@ def _get_student_group_name(student_id: int | str, cached_data: Optional[Dict[st
     return "Студент"
 
 
+def _detect_lesson_type(l: Dict[str, Any]) -> str:
+    """Определяет тип занятия (Лекция, Практика, Лабораторная и т.д.) аналогично мобильному приложению."""
+    s = (l.get("дисциплина") or "").strip()
+    s_low = s.lower()
+    t = (l.get("тема") or "").strip().lower()
+    c = (l.get("цвет") or "").strip().lower()
+
+    m = re.match(r"^(лек|пр|лаб|сем|зач|экз|конс|кп|кр)[\.\s]+", s, re.IGNORECASE)
+    if m:
+        p = m.group(1).lower()
+        return {
+            "лек": "Лекция",
+            "пр": "Практика",
+            "лаб": "Лабораторная",
+            "сем": "Семинар",
+            "зач": "Зачет",
+            "экз": "Экзамен",
+            "конс": "Консультация",
+        }.get(p, "Практика")
+
+    if re.search(r"(?:^|[\s,.;:()])(лекция|лекц\.|лек\.)(?:$|[\s,.;:()0-9])", t) or re.match(r"^тема\s*\d+", t):
+        return "Лекция"
+    if re.search(r"(?:^|[\s,.;:()])(практика|практическое|практикум|пр\.|кср)(?:$|[\s,.;:()0-9])", t):
+        return "Практика"
+    if "лаборатор" in t or t.startswith("лаб"):
+        return "Лабораторная"
+    if "семинар" in t:
+        return "Семинар"
+    if t.startswith("зачет") or t.startswith("зачёт") or t == "зачет":
+        return "Зачет"
+    if t.startswith("экзамен") or t == "экзамен":
+        return "Экзамен"
+    if t.startswith("защита") or t.startswith("предзащита") or t.startswith("открытая защита"):
+        return "Защита"
+    if t.startswith("консультация") or s_low.startswith("консультация"):
+        return "Консультация"
+
+    if "профильный проект" in s_low:
+        return "Практика"
+
+    if any(
+        k in t
+        for k in (
+            "работа над",
+            "работа с",
+            "работа по",
+            "кейс",
+            "воркшоп",
+            "мастер-слайд",
+            "мастер-класс",
+            "плейтест",
+            "разработка",
+            "сборка",
+            "моделирование",
+            "расчет",
+            "расчёт",
+            "решение задач",
+            "поиск и анализ",
+            "пакет конкурсной",
+        )
+    ):
+        return "Практика"
+
+    if c in ("#4caf50", "#008000"):
+        return "Лекция"
+    if c in ("#5c6bc0", "#2196f3", "#009688", "#ff9800", "#ab47bc", "#fdd017", "#44c8c8"):
+        return "Практика"
+    if c == "#004c3e":
+        return "Лабораторная"
+    if c == "#ef5350":
+        return "Зачет"
+
+    if t and any(
+        t.startswith(k)
+        for k in (
+            "введение",
+            "основы",
+            "теория",
+            "история",
+            "архитектура",
+            "проектная документация",
+            "отчеты о нир",
+            "оформление научных",
+            "визуализация результатов",
+            "принципы",
+            "методология",
+            "современные тренды",
+            "проблемы защиты",
+            "особенности реализации",
+            "обучение с подкреплением",
+            "процедурная генерация",
+        )
+    ):
+        return "Лекция"
+
+    return "Практика"
+
+
 def _format_day_schedule(lessons: List[Dict[str, Any]], title_date: str) -> str:
     """Форматирует расписание на один день в виде красивого текста для Telegram."""
     if not lessons:
@@ -120,7 +218,7 @@ def _format_day_schedule(lessons: List[Dict[str, Any]], title_date: str) -> str:
         subj = l.get("дисциплина", "Занятие").strip()
         aud = l.get("аудитория", "").strip()
         teacher = (l.get("преподаватель") or l.get("фиоПреподавателя") or "").strip()
-        type_lesson = (l.get("тип") or l.get("видЗанятия") or "").strip()
+        type_lesson = _detect_lesson_type(l)
 
         type_emoji = "📘"
         if "лек" in type_lesson.lower():
@@ -129,7 +227,7 @@ def _format_day_schedule(lessons: List[Dict[str, Any]], title_date: str) -> str:
             type_emoji = "🔬 [Лаб]"
         elif "прак" in type_lesson.lower():
             type_emoji = "📙 [Практика]"
-        elif type_lesson:
+        else:
             type_emoji = f"📘 [{type_lesson}]"
 
         lines.append(f"<b>{num}-я пара</b> ({time_str}):")
