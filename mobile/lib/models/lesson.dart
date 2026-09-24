@@ -13,11 +13,13 @@ class Lesson {
   final String lessonType;
   final String? academicYear;
   final String? theme;
+  final String? color;
 
   // Динамические статусы изменений из Diff Engine
   bool isCancelled;
   bool isRoomChanged;
   bool isTeacherChanged;
+  bool isTimeChanged;
   bool isNew;
   String? oldRoom;
   String? oldTeacher;
@@ -38,9 +40,11 @@ class Lesson {
     this.group,
     this.academicYear,
     this.theme,
+    this.color,
     this.isCancelled = false,
     this.isRoomChanged = false,
     this.isTeacherChanged = false,
+    this.isTimeChanged = false,
     this.isNew = false,
     this.oldRoom,
     this.oldTeacher,
@@ -52,10 +56,10 @@ class Lesson {
     caseSensitive: false
   );
 
-  static String detectLessonType(String originalSubject, String? theme) {
+  static String detectLessonType(String originalSubject, String? theme, {String? color}) {
     final s = originalSubject.trim();
     final t = (theme ?? '').trim().toLowerCase();
-    final sLower = s.toLowerCase();
+    final c = (color ?? '').trim().toLowerCase();
 
     // 1. Проверяем префикс в самом названии предмета (лек, пр, лаб и т.д.)
     final match = _typePrefixRegex.firstMatch(s);
@@ -72,35 +76,55 @@ class Lesson {
       }
     }
 
-    // 2. В ДГТУ на старших курсах тип занятия указывается в поле 'тема' (theme)
-    if (t.contains('лекция') || t.contains('лекц') || t.contains('лек.')) {
+    // 2. В ДГТУ в поле 'тема' (theme) часто указывается конкретный тип занятия
+    if (t.contains('лекция') || t.contains('лекц') || t.contains('лек.') || t.startsWith('лек ')) {
       return 'Лекция';
     }
-    if (t.contains('практика') || 
-        t.contains('практ') || 
-        t.contains('семинар') || 
-        t.contains('кейс') || 
-        t.contains('проект') || 
-        t.contains('лаборатор') || 
-        t.contains('воркшоп') || 
-        t.contains('дизайн') || 
-        t.contains('разработка') || 
-        t.contains('работа над') ||
-        t.contains('работа с')) {
+    if (t.contains('практика') || t.contains('практ') || t.startsWith('пр ') || t.startsWith('пр.')) {
       return 'Практика';
     }
+    if (t.contains('лаборатор') || t.startsWith('лаб')) return 'Лабораторная';
+    if (t.contains('семинар')) return 'Семинар';
     if (t.contains('зачет')) return 'Зачет';
     if (t.contains('экзамен')) return 'Экзамен';
     if (t.contains('защита')) return 'Защита';
+    if (t.contains('консультация')) return 'Консультация';
 
-    // 3. Эвристика по названию дисциплины
-    if (sLower.contains('проект') || sLower.contains('разработка') || sLower.contains('документация')) {
+    // 3. Анализ по системному цвету события в расписании ДГТУ:
+    // В ДГТУ цвет ячейки расписания жестко привязан к типу:
+    // #4caf50 (зеленый), #008000, #ab47bc — это Лекции
+    // #5c6bc0 (индиго), #2196f3 (синий), #009688 — это Практики
+    // #004c3e — Лабораторные
+    if (c == '#4caf50' || c == '#008000' || c == '#ab47bc') {
+      return 'Лекция';
+    }
+    if (c == '#5c6bc0' || c == '#2196f3' || c == '#009688') {
       return 'Практика';
     }
-    if (sLower.contains('экономика') || sLower.contains('стартап') || sLower.contains('маркетинг') || sLower.contains('менеджмент')) {
+    if (c == '#004c3e') {
+      return 'Лабораторная';
+    }
+
+    // 4. Анализ темы на прикладной характер
+    if (t.contains('кейс') || 
+        t.contains('воркшоп') || 
+        t.contains('работа над') || 
+        t.contains('работа с')) {
+      return 'Практика';
+    }
+
+    // 5. Если в поле 'тема' указано содержательное теоретическое название лекции
+    if (t.isNotEmpty && (
+        t.startsWith('введение') || 
+        t.startsWith('основы') || 
+        t.startsWith('теория') || 
+        t.startsWith('история') || 
+        t.startsWith('архитектура')
+    )) {
       return 'Лекция';
     }
 
+    // 6. По умолчанию считаем практикой
     return 'Практика';
   }
 
@@ -108,8 +132,9 @@ class Lesson {
     final originalSubject = (json['дисциплина'] as String? ?? 'Занятие').trim();
     final rawTheme = json['тема'] as String?;
     final cleanTheme = (rawTheme != null && rawTheme.trim().isNotEmpty) ? rawTheme.trim() : null;
+    final rawColor = json['цвет'] as String?;
 
-    final detectedType = detectLessonType(originalSubject, cleanTheme);
+    final detectedType = detectLessonType(originalSubject, cleanTheme, color: rawColor);
 
     // Очищаем название предмета от префиксов вроде "лек ", "пр "
     String cleanSubject = originalSubject;
@@ -134,6 +159,7 @@ class Lesson {
       group: json['группа'] as String?,
       academicYear: json['учебныйГод'] as String?,
       theme: cleanTheme,
+      color: rawColor,
     );
   }
 
@@ -156,8 +182,12 @@ class Lesson {
       'деньНедели': dayOfWeek,
       'типЗанятия': lessonType,
       'тема': theme,
+      'цвет': color,
       'isCancelled': isCancelled,
       'isRoomChanged': isRoomChanged,
+      'isTeacherChanged': isTeacherChanged,
+      'isTimeChanged': isTimeChanged,
+      'isNew': isNew,
       'changeNote': changeNote,
     };
   }

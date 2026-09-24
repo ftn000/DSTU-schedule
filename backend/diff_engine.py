@@ -8,6 +8,7 @@
 - TIME_CHANGED (изменение времени / номера пары)
 """
 
+import re
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass, asdict
 from datetime import datetime
@@ -34,6 +35,7 @@ class ChangeItem:
     human_message: str
     old_lesson: Optional[Dict[str, Any]] = None
     new_lesson: Optional[Dict[str, Any]] = None
+    old_lesson_id: Optional[int] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -55,6 +57,38 @@ def _clean_str(val: Any) -> str:
     if val is None:
         return ""
     return str(val).strip()
+
+
+def _normalize_subject(s: Any) -> str:
+    """Очищает название дисциплины от префиксов (лек, пр, лаб) для надёжного сравнения."""
+    if not s:
+        return ""
+    val = str(s).strip()
+    val = re.sub(r'^(?:лек|пр|лаб|сем|зач|экз|конс|кп|кр)[\.\s]+', '', val, flags=re.IGNORECASE)
+    return val.strip().lower()
+
+
+def _norm_room(val: Any) -> str:
+    """Нормализует номер аудитории для сравнения (регистронезависимо, без лишних пробелов и дефисов)."""
+    s = _clean_str(val).lower()
+    return re.sub(r'[\s\-]+', '', s)
+
+
+def _norm_teacher(val: Any) -> str:
+    """Нормализует фамилию преподавателя для сравнения (сверяет фамилию как главное слово)."""
+    s = _clean_str(val).strip()
+    if not s:
+        return ""
+    parts = s.split()
+    return parts[0].lower() if parts else ""
+
+
+def _norm_time(item: Dict[str, Any]) -> str:
+    """Нормализует временной слот занятия."""
+    num = item.get("номерЗанятия", 0)
+    start = _clean_str(item.get("начало"))
+    end = _clean_str(item.get("конец"))
+    return f"{num}_{start}_{end}"
 
 
 def extract_lessons(data: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -82,137 +116,262 @@ def compare_schedules(
     only_upcoming: bool = False
 ) -> List[ChangeItem]:
     """
-    Сравнивает старое и новое расписание.
-    
-    :param old_data: предыдущий JSON расписания
-    :param new_data: свежий JSON расписания
-    :param only_upcoming: если True, учитывать изменения только на сегодня и будущее
-    :return: список зафиксированных изменений ChangeItem
+    Сравнивает старое и новое расписание по четырем ключевым параметрам:
+    1. Название предмета (subject)
+    2. Аудитория (room)
+    3. Преподаватель (teacher)
+    4. Время / номер пары (time)
+
+    Если совпадают 4 параметра -> пара без изменений (независимо от генерации нового 'код' сайтом ДГТУ).
+    Если совпадают 3 параметра:
+      - сменилась аудитория -> ROOM_CHANGED (замена аудитории)
+      - сменился преподаватель -> TEACHER_CHANGED (замена преподавателя)
+      - сменилось время -> TIME_CHANGED (замена времени)
+    Если отменилась одна пара и появилась другая (не совпадают) -> CANCELLED + ADDED.
     """
     old_lessons = extract_lessons(old_data)
     new_lessons = extract_lessons(new_data)
 
     today_str = datetime.now().strftime("%Y-%m-%d")
 
-    # Индексируем занятия по их уникальному коду из ДГТУ
-    old_map: Dict[int, Dict[str, Any]] = {}
+    unmatched_old = []
     for item in old_lessons:
-        code = item.get("код")
-        if code:
-            old_map[code] = item
+        raw_date = item.get("дата", "")[:10]
+        if only_upcoming and raw_date < today_str:
+            continue
+        unmatched_old.append(item)
 
-    new_map: Dict[int, Dict[str, Any]] = {}
+    unmatched_new = []
     for item in new_lessons:
-        code = item.get("код")
-        if code:
-            new_map[code] = item
+        raw_date = item.get("дата", "")[:10]
+        if only_upcoming and raw_date < today_str:
+            continue
+        unmatched_new.append(item)
 
     changes: List[ChangeItem] = []
 
-    # 1. Проверяем пропавшие (отмененные) пары
-    for code, old_item in old_map.items():
-        raw_date = old_item.get("дата", "")[:10]
-        if only_upcoming and raw_date < today_str:
+    # Шаг 1: Точное совпадение всех 4 параметров на одну дату (предмет, ауд, препод, время)
+    # Эти пары полностью идентичны, исключаем их из дальнейшего сопоставления
+    matched_old_indices = set()
+    matched_new_indices = set()
+
+    for o_idx, o in enumerate(unmatched_old):
+        o_date = o.get("дата", "")[:10]
+        o_subj = _normalize_subject(o.get("дисциплина"))
+        o_room = _norm_room(o.get("аудитория"))
+        o_teach = _norm_teacher(o.get("преподаватель") or o.get("фиоПреподавателя"))
+        o_time = _norm_time(o)
+
+        for n_idx, n in enumerate(unmatched_new):
+            if n_idx in matched_new_indices:
+                continue
+            n_date = n.get("дата", "")[:10]
+            if o_date != n_date:
+                continue
+
+            n_subj = _normalize_subject(n.get("дисциплина"))
+            n_room = _norm_room(n.get("аудитория"))
+            n_teach = _norm_teacher(n.get("преподаватель") or n.get("фиоПреподавателя"))
+            n_time = _norm_time(n)
+
+            if o_subj == n_subj and o_room == n_room and o_teach == n_teach and o_time == n_time:
+                matched_old_indices.add(o_idx)
+                matched_new_indices.add(n_idx)
+                break
+
+    # Шаг 2: Сопоставление при совпадении 3 из 4 параметров на одну дату
+
+    # 2.1: Смена аудитории (совпадают: название, препод, время; отличается: аудитория)
+    for o_idx, o in enumerate(unmatched_old):
+        if o_idx in matched_old_indices:
             continue
+        o_date = o.get("дата", "")[:10]
+        o_subj = _normalize_subject(o.get("дисциплина"))
+        o_room = _norm_room(o.get("аудитория"))
+        o_teach = _norm_teacher(o.get("преподаватель") or o.get("фиоПреподавателя"))
+        o_time = _norm_time(o)
 
-        if code not in new_map:
-            date_fmt = _format_date(old_item.get("дата", ""))
-            num = old_item.get("номерЗанятия", 0)
-            subj = _clean_str(old_item.get("дисциплина"))
-            aud = _clean_str(old_item.get("аудитория"))
-            msg = f"{date_fmt}, {num}-я пара ({subj}): пара отменена (была в ауд. {aud})"
+        for n_idx, n in enumerate(unmatched_new):
+            if n_idx in matched_new_indices:
+                continue
+            n_date = n.get("дата", "")[:10]
+            if o_date != n_date:
+                continue
 
-            changes.append(ChangeItem(
-                type="CANCELLED",
-                lesson_id=code,
-                date=raw_date,
-                lesson_num=num,
-                subject=subj,
-                details=f"Пара отменена (исчезла из расписания). Ауд: {aud}",
-                human_message=msg,
-                old_lesson=old_item,
-                new_lesson=None
-            ))
+            n_subj = _normalize_subject(n.get("дисциплина"))
+            n_room = _norm_room(n.get("аудитория"))
+            n_teach = _norm_teacher(n.get("преподаватель") or n.get("фиоПреподавателя"))
+            n_time = _norm_time(n)
 
-    # 2. Проверяем новые пары и изменения в существующих
-    for code, new_item in new_map.items():
-        raw_date = new_item.get("дата", "")[:10]
-        if only_upcoming and raw_date < today_str:
+            if o_subj == n_subj and o_teach == n_teach and o_time == n_time and o_room != n_room:
+                matched_old_indices.add(o_idx)
+                matched_new_indices.add(n_idx)
+
+                old_aud = _clean_str(o.get("аудитория"))
+                new_aud = _clean_str(n.get("аудитория"))
+                date_fmt = _format_date(n.get("дата", ""))
+                num = n.get("номерЗанятия", 0)
+                subj = _clean_str(n.get("дисциплина"))
+                msg = f"{date_fmt}, {num}-я пара ({subj}): смена аудитории: {old_aud} -> {new_aud}"
+
+                changes.append(ChangeItem(
+                    type="ROOM_CHANGED",
+                    lesson_id=n.get("код") or o.get("код"),
+                    old_lesson_id=o.get("код"),
+                    date=o_date,
+                    lesson_num=num,
+                    subject=subj,
+                    details=f"Аудитория изменена с '{old_aud}' на '{new_aud}'",
+                    human_message=msg,
+                    old_lesson=o,
+                    new_lesson=n
+                ))
+                break
+
+    # 2.2: Замена преподавателя (совпадают: название, аудитория, время; отличается: препод)
+    for o_idx, o in enumerate(unmatched_old):
+        if o_idx in matched_old_indices:
             continue
+        o_date = o.get("дата", "")[:10]
+        o_subj = _normalize_subject(o.get("дисциплина"))
+        o_room = _norm_room(o.get("аудитория"))
+        o_teach = _norm_teacher(o.get("преподаватель") or o.get("фиоПреподавателя"))
+        o_time = _norm_time(o)
 
-        date_fmt = _format_date(new_item.get("дата", ""))
-        num = new_item.get("номерЗанятия", 0)
-        subj = _clean_str(new_item.get("дисциплина"))
-        new_aud = _clean_str(new_item.get("аудитория"))
-        new_teacher = _clean_str(new_item.get("преподаватель") or new_item.get("фиоПреподавателя"))
+        for n_idx, n in enumerate(unmatched_new):
+            if n_idx in matched_new_indices:
+                continue
+            n_date = n.get("дата", "")[:10]
+            if o_date != n_date:
+                continue
 
-        # Новая пара
-        if code not in old_map:
-            msg = f"{date_fmt}, {num}-я пара ({subj}): добавлена новая пара в ауд. {new_aud}"
-            changes.append(ChangeItem(
-                type="ADDED",
-                lesson_id=code,
-                date=raw_date,
-                lesson_num=num,
-                subject=subj,
-                details=f"Добавлена новая пара. Ауд: {new_aud}, Препод: {new_teacher}",
-                human_message=msg,
-                old_lesson=None,
-                new_lesson=new_item
-            ))
+            n_subj = _normalize_subject(n.get("дисциплина"))
+            n_room = _norm_room(n.get("аудитория"))
+            n_teach = _norm_teacher(n.get("преподаватель") or n.get("фиоПреподавателя"))
+            n_time = _norm_time(n)
+
+            if o_subj == n_subj and o_room == n_room and o_time == n_time and o_teach != n_teach:
+                matched_old_indices.add(o_idx)
+                matched_new_indices.add(n_idx)
+
+                old_teach_name = _clean_str(o.get("преподаватель") or o.get("фиоПреподавателя"))
+                new_teach_name = _clean_str(n.get("преподаватель") or n.get("фиоПреподавателя"))
+                date_fmt = _format_date(n.get("дата", ""))
+                num = n.get("номерЗанятия", 0)
+                subj = _clean_str(n.get("дисциплина"))
+                msg = f"{date_fmt}, {num}-я пара ({subj}): замена преподавателя: {old_teach_name} -> {new_teach_name}"
+
+                changes.append(ChangeItem(
+                    type="TEACHER_CHANGED",
+                    lesson_id=n.get("код") or o.get("код"),
+                    old_lesson_id=o.get("код"),
+                    date=o_date,
+                    lesson_num=num,
+                    subject=subj,
+                    details=f"Преподаватель изменен с '{old_teach_name}' на '{new_teach_name}'",
+                    human_message=msg,
+                    old_lesson=o,
+                    new_lesson=n
+                ))
+                break
+
+    # 2.3: Замена времени (совпадают: название, аудитория, препод; отличается: время/номер пары)
+    for o_idx, o in enumerate(unmatched_old):
+        if o_idx in matched_old_indices:
             continue
+        o_date = o.get("дата", "")[:10]
+        o_subj = _normalize_subject(o.get("дисциплина"))
+        o_room = _norm_room(o.get("аудитория"))
+        o_teach = _norm_teacher(o.get("преподаватель") or o.get("фиоПреподавателя"))
+        o_time = _norm_time(o)
 
-        # Существующая пара — сверяем реквизиты
-        old_item = old_map[code]
-        old_aud = _clean_str(old_item.get("аудитория"))
-        old_teacher = _clean_str(old_item.get("преподаватель") or old_item.get("фиоПреподавателя"))
-        old_time = f"{old_item.get('начало')}-{old_item.get('конец')}"
-        new_time = f"{new_item.get('начало')}-{new_item.get('конец')}"
+        for n_idx, n in enumerate(unmatched_new):
+            if n_idx in matched_new_indices:
+                continue
+            n_date = n.get("дата", "")[:10]
+            # Время может измениться в тот же день (перенос пары на другой слот)
+            if o_date != n_date:
+                continue
 
-        # Проверка смены аудитории
-        if old_aud != new_aud:
-            msg = f"{date_fmt}, {num}-я пара ({subj}): смена аудитории: {old_aud} -> {new_aud}"
-            changes.append(ChangeItem(
-                type="ROOM_CHANGED",
-                lesson_id=code,
-                date=raw_date,
-                lesson_num=num,
-                subject=subj,
-                details=f"Аудитория изменена с '{old_aud}' на '{new_aud}'",
-                human_message=msg,
-                old_lesson=old_item,
-                new_lesson=new_item
-            ))
+            n_subj = _normalize_subject(n.get("дисциплина"))
+            n_room = _norm_room(n.get("аудитория"))
+            n_teach = _norm_teacher(n.get("преподаватель") or n.get("фиоПреподавателя"))
+            n_time = _norm_time(n)
 
-        # Проверка замены преподавателя
-        if old_teacher != new_teacher and new_teacher:
-            msg = f"{date_fmt}, {num}-я пара ({subj}): замена преподавателя: {old_teacher} -> {new_teacher}"
-            changes.append(ChangeItem(
-                type="TEACHER_CHANGED",
-                lesson_id=code,
-                date=raw_date,
-                lesson_num=num,
-                subject=subj,
-                details=f"Преподаватель изменен с '{old_teacher}' на '{new_teacher}'",
-                human_message=msg,
-                old_lesson=old_item,
-                new_lesson=new_item
-            ))
+            if o_subj == n_subj and o_room == n_room and o_teach == n_teach and o_time != n_time:
+                matched_old_indices.add(o_idx)
+                matched_new_indices.add(n_idx)
 
-        # Проверка изменения времени
-        if old_time != new_time:
-            msg = f"{date_fmt}, пара '{subj}': время изменено: {old_time} -> {new_time}"
-            changes.append(ChangeItem(
-                type="TIME_CHANGED",
-                lesson_id=code,
-                date=raw_date,
-                lesson_num=num,
-                subject=subj,
-                details=f"Время изменено с {old_time} на {new_time}",
-                human_message=msg,
-                old_lesson=old_item,
-                new_lesson=new_item
-            ))
+                old_time_str = f"{o.get('начало')}-{o.get('конец')}"
+                new_time_str = f"{n.get('начало')}-{n.get('конец')}"
+                date_fmt = _format_date(n.get("дата", ""))
+                old_num = o.get("номерЗанятия", 0)
+                new_num = n.get("номерЗанятия", 0)
+                subj = _clean_str(n.get("дисциплина"))
+                msg = f"{date_fmt}, пара '{subj}': время изменено: {old_time_str} ({old_num}п) -> {new_time_str} ({new_num}п)"
+
+                changes.append(ChangeItem(
+                    type="TIME_CHANGED",
+                    lesson_id=n.get("код") or o.get("код"),
+                    old_lesson_id=o.get("код"),
+                    date=n_date,
+                    lesson_num=new_num,
+                    subject=subj,
+                    details=f"Время изменено с {old_time_str} ({old_num}-я пара) на {new_time_str} ({new_num}-я пара)",
+                    human_message=msg,
+                    old_lesson=o,
+                    new_lesson=n
+                ))
+                break
+
+    # Шаг 3: Оставшиеся несовпавшие старые занятия -> CANCELLED (Пара отменена)
+    for o_idx, o in enumerate(unmatched_old):
+        if o_idx in matched_old_indices:
+            continue
+        o_date = o.get("дата", "")[:10]
+        date_fmt = _format_date(o.get("дата", ""))
+        num = o.get("номерЗанятия", 0)
+        subj = _clean_str(o.get("дисциплина"))
+        aud = _clean_str(o.get("аудитория"))
+        msg = f"{date_fmt}, {num}-я пара ({subj}): пара отменена (была в ауд. {aud})"
+
+        changes.append(ChangeItem(
+            type="CANCELLED",
+            lesson_id=o.get("код"),
+            old_lesson_id=o.get("код"),
+            date=o_date,
+            lesson_num=num,
+            subject=subj,
+            details=f"Пара отменена (исчезла из расписания). Ауд: {aud}",
+            human_message=msg,
+            old_lesson=o,
+            new_lesson=None
+        ))
+
+    # Шаг 4: Оставшиеся несовпавшие новые занятия -> ADDED (Пара добавлена)
+    for n_idx, n in enumerate(unmatched_new):
+        if n_idx in matched_new_indices:
+            continue
+        n_date = n.get("дата", "")[:10]
+        date_fmt = _format_date(n.get("дата", ""))
+        num = n.get("номерЗанятия", 0)
+        subj = _clean_str(n.get("дисциплина"))
+        new_aud = _clean_str(n.get("аудитория"))
+        new_teacher = _clean_str(n.get("преподаватель") or n.get("фиоПреподавателя"))
+        msg = f"{date_fmt}, {num}-я пара ({subj}): добавлена новая пара в ауд. {new_aud}"
+
+        changes.append(ChangeItem(
+            type="ADDED",
+            lesson_id=n.get("код"),
+            old_lesson_id=None,
+            date=n_date,
+            lesson_num=num,
+            subject=subj,
+            details=f"Добавлена новая пара. Ауд: {new_aud}, Препод: {new_teacher}",
+            human_message=msg,
+            old_lesson=None,
+            new_lesson=n
+        ))
 
     # Сортируем изменения по дате и номеру пары
     changes.sort(key=lambda x: (x.date, x.lesson_num))

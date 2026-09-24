@@ -214,20 +214,46 @@ class ApiService {
     final dateUploading = payload['date_uploading'] as String? ?? infoBlock['dateUploadingRasp'] as String?;
     final warning = fallbackWarning ?? payload['warning'] as String?;
 
-    // Извлекаем недавние изменения для маркировки отмененных пар и переносов
+    // Извлекаем недавние изменения для маркировки отмененных пар, переносов и смен аудиторий
     final recentChanges = (payload['recent_changes'] as List<dynamic>?) ?? [];
+    
+    // Вспомогательная нормализация названий предметов
+    String normSubj(String s) {
+      final clean = s.trim().toLowerCase();
+      final typePrefixRegex = RegExp(r'^(?:лек|пр|лаб|сем|зач|экз|конс|кп|кр)[\.\s]+', caseSensitive: false);
+      return clean.replaceFirst(typePrefixRegex, '').trim();
+    }
+
     final cancelledLessonIds = <int>{};
-    final roomChanges = <int, String>{};
+    final roomChangesById = <int, String>{};
+    final teacherChangesById = <int, String>{};
+    final timeChangesById = <int, String>{};
+    final addedLessonIds = <int>{};
 
     for (final ch in recentChanges) {
-      final changeType = ch['change_type'] as String?;
+      final changeType = (ch['change_type'] as String? ?? ch['type'] as String? ?? '').toUpperCase();
       final lessonId = ch['lesson_id'] as int?;
-      if (lessonId == null) continue;
+      final details = ch['details'] as String? ?? ch['human_message'] as String? ?? '';
 
-      if (changeType == 'CANCELLED') {
-        cancelledLessonIds.add(lessonId);
-      } else if (changeType == 'ROOM_CHANGED') {
-        roomChanges[lessonId] = ch['details'] as String? ?? 'Аудитория перенесена';
+      if (lessonId != null) {
+        switch (changeType) {
+          case 'CANCELLED':
+            cancelledLessonIds.add(lessonId);
+            break;
+          case 'ROOM_CHANGED':
+            roomChangesById[lessonId] = details.isNotEmpty ? details : 'Аудитория изменена';
+            break;
+          case 'TEACHER_CHANGED':
+            teacherChangesById[lessonId] = details.isNotEmpty ? details : 'Преподаватель изменен';
+            break;
+          case 'TIME_CHANGED':
+            timeChangesById[lessonId] = details.isNotEmpty ? details : 'Время изменено';
+            break;
+          case 'ADDED':
+          case 'NEW':
+            addedLessonIds.add(lessonId);
+            break;
+        }
       }
     }
 
@@ -239,7 +265,7 @@ class ApiService {
 
     // Добавляем отмененные пары, которых уже нет в основном расписании ДГТУ
     for (final ch in recentChanges) {
-      final changeType = ch['change_type'] as String?;
+      final changeType = (ch['change_type'] as String? ?? ch['type'] as String? ?? '').toUpperCase();
       if (changeType == 'CANCELLED') {
         final lessonId = ch['lesson_id'] as int?;
         dynamic rawData = ch['lesson_data'] ?? ch['old_lesson'];
@@ -253,10 +279,22 @@ class ApiService {
         }
 
         if (lessonMap != null) {
-          final alreadyExists = lessons.any((l) => l.id == lessonId);
-          if (!alreadyExists) {
-            final cancelledLesson = Lesson.fromJson(lessonMap);
-            if (!cancelledLesson.isMilitaryTraining) {
+          final cancelledLesson = Lesson.fromJson(lessonMap);
+          if (!cancelledLesson.isMilitaryTraining) {
+            final cancelledDate = (ch['lesson_date'] as String? ?? ch['date'] as String? ?? cancelledLesson.rawDate).split('T')[0];
+            
+            // Защита от дублей: если в расписании на эту же дату и номер пары УЖЕ есть активное занятие
+            // по тому же предмету (например, при смене аудитории/преподавателя с новым ID),
+            // ни в коем случае НЕ добавляем дубликат со статусом "отменена"!
+            final alreadyCovered = lessons.any((l) =>
+                (lessonId != null && l.id == lessonId) ||
+                (l.rawDate.startsWith(cancelledDate) &&
+                 l.lessonNum == cancelledLesson.lessonNum &&
+                 normSubj(l.subject) == normSubj(cancelledLesson.subject) &&
+                 !l.isCancelled)
+            );
+
+            if (!alreadyCovered) {
               cancelledLesson.isCancelled = true;
               cancelledLesson.changeNote = ch['details'] as String? ?? 'Пара отменена';
               lessons.add(cancelledLesson);
@@ -266,14 +304,53 @@ class ApiService {
       }
     }
 
+    // Проставляем статусы изменений на актуальные пары
     for (final lesson in lessons) {
       if (cancelledLessonIds.contains(lesson.id)) {
         lesson.isCancelled = true;
         lesson.changeNote = 'Пара отменена';
       }
-      if (roomChanges.containsKey(lesson.id)) {
+      if (roomChangesById.containsKey(lesson.id)) {
         lesson.isRoomChanged = true;
-        lesson.changeNote = roomChanges[lesson.id];
+        lesson.changeNote = roomChangesById[lesson.id];
+      }
+      if (teacherChangesById.containsKey(lesson.id)) {
+        lesson.isTeacherChanged = true;
+        lesson.changeNote = teacherChangesById[lesson.id];
+      }
+      if (timeChangesById.containsKey(lesson.id)) {
+        lesson.isTimeChanged = true;
+        lesson.changeNote = timeChangesById[lesson.id];
+      }
+      if (addedLessonIds.contains(lesson.id)) {
+        lesson.isNew = true;
+      }
+    }
+
+    // Если пара не сопоставилась по ID (в ДГТУ сменился 'код'), сопоставляем по реквизитам
+    for (final ch in recentChanges) {
+      final changeType = (ch['change_type'] as String? ?? ch['type'] as String? ?? '').toUpperCase();
+      final chDate = (ch['lesson_date'] as String? ?? ch['date'] as String? ?? '').split('T')[0];
+      final chNum = ch['lesson_num'] as int? ?? 0;
+      final chSubj = normSubj(ch['subject'] as String? ?? '');
+      final details = ch['details'] as String? ?? ch['human_message'] as String? ?? '';
+
+      if (chDate.isEmpty || chNum == 0 || chSubj.isEmpty) continue;
+
+      for (final lesson in lessons) {
+        if (lesson.isCancelled) continue;
+        if (lesson.rawDate.startsWith(chDate) && lesson.lessonNum == chNum && normSubj(lesson.subject) == chSubj) {
+          if (changeType == 'ROOM_CHANGED' && !lesson.isRoomChanged) {
+            lesson.isRoomChanged = true;
+            lesson.changeNote = details.isNotEmpty ? details : 'Аудитория изменена';
+          } else if (changeType == 'TEACHER_CHANGED' && !lesson.isTeacherChanged) {
+            lesson.isTeacherChanged = true;
+            lesson.changeNote = details.isNotEmpty ? details : 'Преподаватель изменен';
+          } else if (changeType == 'TIME_CHANGED' && !lesson.isTimeChanged) {
+            lesson.isTimeChanged = true;
+            lesson.changeNote = details.isNotEmpty ? details : 'Время изменено';
+          }
+        }
       }
     }
 
