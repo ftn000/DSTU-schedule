@@ -15,6 +15,7 @@ from typing import Optional, List, Dict, Any
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Query
+from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -22,6 +23,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from database import Database
 from fetcher import fetch_schedule
 from diff_engine import compare_schedules, format_push_notification, extract_lessons
+from telegram_bot import start_bot_polling, set_database, broadcast_schedule_changes
 
 
 # Настройка логирования
@@ -70,7 +72,14 @@ async def sync_target(target_id: str, student_id: int | str):
 
         if changes:
             logger.info(f"Зафиксировано {len(changes)} изменений для {target_id}")
-            db.log_changes(target_id, [c.to_dict() for c in changes])
+            changes_dicts = [c.to_dict() for c in changes]
+            db.log_changes(target_id, changes_dicts)
+
+            # Отправляем уведомления подписчикам в Telegram
+            try:
+                await broadcast_schedule_changes(target_id, changes_dicts)
+            except Exception as tg_err:
+                logger.error(f"Ошибка при отправке Telegram-уведомлений: {tg_err}")
 
             push = format_push_notification(changes)
             if push:
@@ -116,14 +125,21 @@ async def periodic_check_job():
 async def lifespan(app: FastAPI):
     # При старте приложения
     logger.info("Запуск сервера расписания ДГТУ...")
+    set_database(db)
+
+    # Фоновый запуск Telegram-бота (@dstu_schedule_notify_bot)
+    bot_task = asyncio.create_task(start_bot_polling())
+    logger.info("Telegram-бот успешно инициализирован в фоне")
+
     # Опрос каждые 45 минут (в дневное время)
     scheduler.add_job(periodic_check_job, "interval", minutes=45, id="schedule_checker")
     scheduler.start()
     logger.info("Планировщик фоновых проверок успешно запущен (интервал 45 мин)")
     yield
     # При остановке приложения
+    bot_task.cancel()
     scheduler.shutdown()
-    logger.info("Планировщик остановлен.")
+    logger.info("Планировщик и Telegram-бот остановлены.")
 
 
 app = FastAPI(
@@ -341,6 +357,12 @@ async def simulate_changes(student_id: int):
     db.save_schedule(target_id, "student", data, cached.get("date_uploading"))
     db.log_changes(target_id, simulated_changes)
 
+    # Рассылаем симулированные изменения в Telegram
+    try:
+        await broadcast_schedule_changes(target_id, simulated_changes)
+    except Exception as tg_err:
+        logger.error(f"Ошибка при отправке симулированных изменений в Telegram: {tg_err}")
+
     return {
         "status": "ok",
         "message": f"Успешно симулировано {len(simulated_changes)} изменений",
@@ -357,6 +379,78 @@ async def reset_simulation(student_id: int):
     if fetch_res.success:
         db.save_schedule(target_id, "student", fetch_res.data, fetch_res.upload_date)
     return {"status": "ok", "message": "Симуляция сброшена, расписание восстановлено из ДГТУ"}
+
+
+@app.get("/app", response_class=HTMLResponse)
+async def open_in_mobile_app(
+    student_id: Optional[str] = Query(None),
+    date: Optional[str] = Query(None)
+):
+    """
+    Редирект-страница для кнопки 'Открыть в приложении' из Telegram.
+    Пытается открыть приложение по схеме dstu-schedule://open
+    """
+    deep_link = f"dstu-schedule://open?student_id={student_id or ''}&date={date or ''}"
+    html_content = f"""<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ДГТУ Расписание</title>
+    <meta http-equiv="refresh" content="0; url={deep_link}">
+    <style>
+        body {{
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            background-color: #0f172a;
+            color: #f8fafc;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            margin: 0;
+            padding: 24px;
+            box-sizing: border-box;
+            text-align: center;
+        }}
+        .card {{
+            background: #1e293b;
+            padding: 36px 24px;
+            border-radius: 24px;
+            box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5);
+            max-width: 420px;
+            width: 100%;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+        }}
+        .btn {{
+            display: inline-block;
+            background-color: #2563eb;
+            color: white;
+            text-decoration: none;
+            padding: 14px 28px;
+            border-radius: 12px;
+            font-weight: 600;
+            font-size: 16px;
+            margin-top: 24px;
+            box-shadow: 0 4px 14px rgba(37, 99, 235, 0.4);
+        }}
+    </style>
+</head>
+<body>
+    <div class="card">
+        <div style="font-size: 48px; margin-bottom: 12px;">🎓</div>
+        <h2 style="margin: 0 0 12px 0;">ДГТУ Расписание</h2>
+        <p style="color: #94a3b8; font-size: 15px; margin: 0 0 16px 0;">
+            Открываем расписание в установленном приложении...
+        </p>
+        <a href="{deep_link}" class="btn">📲 Открыть приложение</a>
+        <p style="font-size: 12px; color: #64748b; margin-top: 28px;">
+            Если приложение не открылось автоматически, нажмите кнопку выше.
+        </p>
+    </div>
+</body>
+</html>"""
+    return HTMLResponse(content=html_content)
 
 
 if __name__ == "__main__":

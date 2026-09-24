@@ -75,6 +75,18 @@ class Database:
                     UNIQUE(device_token, target_id)
                 )
             """)
+
+            # Таблица подписчиков Telegram-бота
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS telegram_subscribers (
+                    chat_id INTEGER PRIMARY KEY,
+                    student_id TEXT NOT NULL,
+                    username TEXT,
+                    first_name TEXT,
+                    created_at TIMESTAMP NOT NULL,
+                    is_active INTEGER DEFAULT 1
+                )
+            """)
             
             conn.commit()
 
@@ -116,8 +128,9 @@ class Database:
         date_uploading: Optional[str] = None
     ) -> str:
         """Сохраняет или обновляет расписание в БД. Возвращает вычисленный хеш."""
+        from diff_engine import extract_lessons
         raw_json = json.dumps(data, ensure_ascii=False)
-        content_hash = self.calculate_hash(data.get("data", {}).get("rasp", data))
+        content_hash = self.calculate_hash(extract_lessons(data))
         now = datetime.now().isoformat()
 
         with self._get_connection() as conn:
@@ -196,8 +209,73 @@ class Database:
             conn.commit()
 
     def get_active_targets(self) -> List[Dict[str, str]]:
-        """Возвращает список всех target_id, которые есть в БД или подписках."""
+        """Возвращает список всех target_id, которые есть в БД, подписках или Telegram-подписчиках."""
         with self._get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT DISTINCT target_id, target_type FROM schedules")
+            cursor.execute("""
+                SELECT DISTINCT target_id, target_type FROM schedules
+                UNION
+                SELECT DISTINCT 'student_' || student_id AS target_id, 'student' AS target_type 
+                FROM telegram_subscribers WHERE is_active = 1
+            """)
+            return [dict(row) for row in cursor.fetchall()]
+
+    def subscribe_telegram(
+        self, 
+        chat_id: int, 
+        student_id: str, 
+        username: Optional[str] = None, 
+        first_name: Optional[str] = None
+    ):
+        """Регистрирует или обновляет подписку пользователя Telegram на студента."""
+        now = datetime.now().isoformat()
+        clean_student_id = str(student_id).replace("student_", "")
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO telegram_subscribers (chat_id, student_id, username, first_name, created_at, is_active)
+                VALUES (?, ?, ?, ?, ?, 1)
+                ON CONFLICT(chat_id) DO UPDATE SET
+                    student_id = excluded.student_id,
+                    username = excluded.username,
+                    first_name = excluded.first_name,
+                    is_active = 1
+            """, (chat_id, clean_student_id, username, first_name, now))
+            conn.commit()
+
+    def unsubscribe_telegram(self, chat_id: int):
+        """Отключает уведомления для чата Telegram."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("UPDATE telegram_subscribers SET is_active = 0 WHERE chat_id = ?", (chat_id,))
+            conn.commit()
+
+    def get_telegram_subscriber(self, chat_id: int) -> Optional[Dict[str, Any]]:
+        """Возвращает информацию о подписке пользователя Telegram."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT chat_id, student_id, username, first_name, created_at, is_active "
+                "FROM telegram_subscribers WHERE chat_id = ?", 
+                (chat_id,)
+            )
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    def get_telegram_subscribers(self, target_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Возвращает список активных подписчиков для target_id (student_347338) или всех."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            if target_id:
+                clean_id = str(target_id).replace("student_", "")
+                cursor.execute(
+                    "SELECT chat_id, student_id, username, first_name "
+                    "FROM telegram_subscribers WHERE is_active = 1 AND student_id = ?",
+                    (clean_id,)
+                )
+            else:
+                cursor.execute(
+                    "SELECT chat_id, student_id, username, first_name "
+                    "FROM telegram_subscribers WHERE is_active = 1"
+                )
             return [dict(row) for row in cursor.fetchall()]
