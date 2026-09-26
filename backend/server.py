@@ -146,7 +146,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="DSTU Schedule API",
     description="Бэкенд сервис мониторинга и кэширования расписания ДГТУ",
-    version="1.0.0",
+    version="1.1.0",
     lifespan=lifespan
 )
 

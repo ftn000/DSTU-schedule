@@ -69,7 +69,8 @@ def get_main_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="📅 Сегодня"), KeyboardButton(text="📆 Завтра")],
-            [KeyboardButton(text="🗓 Вся неделя"), KeyboardButton(text="⚙️ Моя подписка")],
+            [KeyboardButton(text="🗓 Текущая неделя"), KeyboardButton(text="🗓 Следующая неделя")],
+            [KeyboardButton(text="⚙️ Моя подписка")],
         ],
         resize_keyboard=True,
     )
@@ -241,6 +242,186 @@ def _format_day_schedule(lessons: List[Dict[str, Any]], title_date: str) -> str:
     return "\n".join(lines).strip()
 
 
+def _format_week_schedule(lessons: List[Dict[str, Any]], week_offset: int = 0) -> str:
+    """Форматирует расписание на неделю (пн-сб) со смещением week_offset относительно текущей недели."""
+    now = datetime.now()
+    monday = (now - timedelta(days=now.weekday())) + timedelta(weeks=week_offset)
+    saturday = monday + timedelta(days=5)
+
+    blocks = []
+    days_ru = ["Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота"]
+
+    for i in range(6):
+        day_dt = monday + timedelta(days=i)
+        day_str = day_dt.strftime("%Y-%m-%d")
+        day_lessons = [l for l in lessons if l.get("дата", "").startswith(day_str)]
+        day_title = f"{days_ru[i]} ({day_dt.day} {_format_date(day_str).split()[1]})"
+
+        if not day_lessons:
+            blocks.append(f"<b>{day_title}</b>: <i>Пар нет</i>")
+            continue
+
+        day_lessons_sorted = sorted(day_lessons, key=lambda x: x.get("номерЗанятия", 0))
+        lines = [f"<b>{day_title}</b>:"]
+        for l in day_lessons_sorted:
+            num = l.get("номерЗанятия", "?")
+            subj = l.get("дисциплина", "").strip()
+            aud = l.get("аудитория", "").strip()
+            type_lesson = _detect_lesson_type(l)
+            type_short = "лк" if "лек" in type_lesson.lower() else ("лаб" if "лаб" in type_lesson.lower() else "пр")
+            aud_str = f"ауд. {aud}" if aud else ""
+            lines.append(f"  • {num} пара [{type_short}]: {subj} {f'({aud_str})' if aud_str else ''}")
+        blocks.append("\n".join(lines))
+
+    if week_offset == 0:
+        header = f"🗓 <b>Расписание на текущую неделю ({monday.strftime('%d.%m')} – {saturday.strftime('%d.%m')}):</b>"
+    elif week_offset == 1:
+        header = f"🗓 <b>Расписание на следующую неделю ({monday.strftime('%d.%m')} – {saturday.strftime('%d.%m')}):</b>"
+    elif week_offset == -1:
+        header = f"🗓 <b>Расписание на прошлую неделю ({monday.strftime('%d.%m')} – {saturday.strftime('%d.%m')}):</b>"
+    else:
+        header = f"🗓 <b>Расписание на неделю ({monday.strftime('%d.%m')} – {saturday.strftime('%d.%m')}):</b>"
+
+    return header + "\n\n" + "\n\n".join(blocks)
+
+
+def get_week_inline_keyboard(student_id: str, week_offset: int = 0) -> InlineKeyboardMarkup:
+    """Генерирует инлайн-кнопки перелистывания недель (⬅️ / ➡️) и ссылку на приложение."""
+    prev_offset = week_offset - 1
+    next_offset = week_offset + 1
+
+    nav_row = [
+        InlineKeyboardButton(text="⬅️ Пред. неделя", callback_data=f"week:{prev_offset}:{student_id}")
+    ]
+    if week_offset != 0:
+        nav_row.append(InlineKeyboardButton(text="🗓 Текущая", callback_data=f"week:0:{student_id}"))
+    nav_row.append(InlineKeyboardButton(text="➡️ След. неделя", callback_data=f"week:{next_offset}:{student_id}"))
+
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            nav_row,
+            [InlineKeyboardButton(text="📲 Открыть в приложении", url=f"{APP_REDIRECT_URL}?student_id={student_id}")],
+        ]
+    )
+
+
+MONTHS_RU_MAP = {
+    "янв": 1, "января": 1, "январь": 1,
+    "фев": 2, "февраля": 2, "февраль": 2,
+    "мар": 3, "марта": 3, "март": 3,
+    "апр": 4, "апреля": 4, "апрель": 4,
+    "май": 5, "мая": 5,
+    "июн": 6, "июня": 6, "июнь": 6,
+    "июл": 7, "июля": 7, "июль": 7,
+    "авг": 8, "августа": 8, "август": 8,
+    "сен": 9, "сентября": 9, "сентябрь": 9,
+    "окт": 10, "октября": 10, "октябрь": 10,
+    "ноя": 11, "ноября": 11, "ноябрь": 11,
+    "дек": 12, "декабря": 12, "декабрь": 12,
+}
+
+
+def _safe_date(year: int, month: int, day: int) -> Optional[datetime]:
+    try:
+        return datetime(year, month, day)
+    except ValueError:
+        return None
+
+
+def parse_date_query(raw_text: str) -> Optional[datetime]:
+    """
+    Распознает дату в сообщении пользователя:
+    - Число месяца от 1 до 31 ('28', '5', '05'). Если число уже прошло в текущем месяце — берет следующий месяц.
+    - Дата в формате ДД.ММ или ДД.ММ.ГГГГ ('28.09', '28/09', '28.09.2026').
+    - Дата с русским названием месяца ('28 сентября', '5 окт', '12 мая 2026').
+    - Фразы с префиксами: 'пары на 28', 'расписание 5', 'на 29 число'.
+    """
+    text = raw_text.strip().lower()
+
+    # Срезаем типовые вводные слова и приставки
+    prefixes = [
+        "расписание на", "расписание", "пары на", "пары", "пара на", "пара",
+        "занятия на", "занятия", "уроки на", "уроки", "на"
+    ]
+    for p in prefixes:
+        if text.startswith(p + " "):
+            text = text[len(p):].strip()
+            break
+
+    # Срезаем суффиксы «число», «числа»
+    text = re.sub(r"\s+числ[оа]$", "", text).strip()
+
+    now = datetime.now()
+
+    # 1. Формат: число + название месяца (например "28 сентября", "5 окт", "12 мая 2026")
+    m_text = re.match(r"^0?([1-9]|[12]\d|3[01])\s+([а-яё]+)(?:\s+(\d{2,4}))?$", text)
+    if m_text:
+        day = int(m_text.group(1))
+        m_str = m_text.group(2)
+        year_str = m_text.group(3)
+        month = None
+        for k, v in MONTHS_RU_MAP.items():
+            if m_str.startswith(k):
+                month = v
+                break
+        if month:
+            if year_str:
+                year = int(year_str)
+                if year < 100:
+                    year += 2000
+            else:
+                year = now.year if month >= now.month else now.year + 1
+            dt = _safe_date(year, month, day)
+            if dt:
+                return dt
+
+    # 2. Формат: ДД.ММ или ДД.ММ.ГГГГ (через точку, слэш или дефис)
+    m_dot = re.match(r"^0?([1-9]|[12]\d|3[01])[./-]0?([1-9]|1[012])(?:[./-](\d{2,4}))?$", text)
+    if m_dot:
+        day = int(m_dot.group(1))
+        month = int(m_dot.group(2))
+        year_str = m_dot.group(3)
+        if year_str:
+            year = int(year_str)
+            if year < 100:
+                year += 2000
+        else:
+            year = now.year if month >= now.month else now.year + 1
+        dt = _safe_date(year, month, day)
+        if dt:
+            return dt
+
+    # 3. Число месяца: от 1 до 31 (например "28", "5", "05")
+    m_num = re.match(r"^0?([1-9]|[12]\d|3[01])$", text)
+    if m_num:
+        day = int(m_num.group(1))
+        if day >= now.day:
+            dt = _safe_date(now.year, now.month, day)
+            if dt:
+                return dt
+            # Если в текущем месяце нет такого дня (например 31 сентября), переходим к следующему
+            next_m = now.month + 1
+            next_y = now.year
+            if next_m > 12:
+                next_m = 1
+                next_y += 1
+            return _safe_date(next_y, next_m, day)
+        else:
+            # Число уже прошло в текущем месяце -> берем следующий месяц
+            next_m = now.month + 1
+            next_y = now.year
+            if next_m > 12:
+                next_m = 1
+                next_y += 1
+            dt = _safe_date(next_y, next_m, day)
+            if dt:
+                return dt
+            return _safe_date(now.year, now.month, day)
+
+    return None
+
+
+
 ID_HELP_TEXT = (
     "❓ <b>Где найти свой ID студента?</b>\n"
     "1. Перейдите на сайт <a href=\"https://edu.donstu.ru\">edu.donstu.ru</a>\n"
@@ -288,7 +469,9 @@ async def handle_start(message: types.Message, command: CommandObject):
             f"• <b>ID студента:</b> <code>{student_id}</code>\n"
             f"• <b>Группа:</b> <b>{group_name}</b>\n\n"
             f"🔔 Теперь при любых отменах, переносах пар или сменах аудиторий бот пришлет вам моментальное сообщение со звуком!\n\n"
-            f"Используйте кнопки ниже для быстрого просмотра расписания:"
+            f"💡 <b>Как смотреть пары:</b>\n"
+            f"• Кнопки меню внизу: <b>Сегодня</b>, <b>Завтра</b>, <b>Текущая</b> и <b>Следующая неделя</b>\n"
+            f"• Или просто <b>напишите число</b> (например, <code>28</code> или <code>05.10</code>), чтобы узнать пары на этот день."
         )
         await message.answer(welcome_text, parse_mode=ParseMode.HTML, reply_markup=get_main_keyboard())
         return
@@ -301,8 +484,8 @@ async def handle_start(message: types.Message, command: CommandObject):
         group_name = _get_student_group_name(s_id, cached["data"] if cached else None)
         await message.answer(
             f"👋 С возвращением, <b>{first_name or 'студент'}</b>!\n\n"
-            f"Вы подписаны на уведомления для ID <code>{s_id}</code> ({group_name}).\n"
-            f"Выберите действие на клавиатуре ниже:",
+            f"Вы подписаны на уведомления для ID <code>{s_id}</code> ({group_name}).\n\n"
+            f"💡 <i>Отправьте число (например, <code>28</code> или <code>05.10</code>) или используйте кнопки внизу:</i>",
             parse_mode=ParseMode.HTML,
             reply_markup=get_main_keyboard()
         )
@@ -398,8 +581,7 @@ async def handle_tomorrow(message: types.Message):
     await message.answer(text, parse_mode=ParseMode.HTML, reply_markup=keyboard)
 
 
-@dp.message(F.text == "🗓 Вся неделя")
-async def handle_week(message: types.Message):
+async def _show_week_schedule(message: types.Message, week_offset: int = 0):
     if _db is None:
         return
     sub = _db.get_telegram_subscriber(message.chat.id)
@@ -417,39 +599,69 @@ async def handle_week(message: types.Message):
     student_id = sub["student_id"]
     cached = _db.get_schedule(f"student_{student_id}")
     if not cached:
+        loop = asyncio.get_running_loop()
+        res = await loop.run_in_executor(None, fetch_schedule, student_id)
+        if res.success and res.data:
+            _db.save_schedule(f"student_{student_id}", "student", res.data, res.upload_date)
+            cached = _db.get_schedule(f"student_{student_id}")
+
+    if not cached:
+        await message.answer("Не удалось загрузить расписание. Попробуйте позже.")
         return
 
     lessons = extract_lessons(cached["data"])
-    now = datetime.now()
-    monday = now - timedelta(days=now.weekday())
-
-    blocks = []
-    days_ru = ["Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота"]
-
-    for i in range(6):
-        day_dt = monday + timedelta(days=i)
-        day_str = day_dt.strftime("%Y-%m-%d")
-        day_lessons = [l for l in lessons if l.get("дата", "").startswith(day_str)]
-        day_title = f"{days_ru[i]} ({day_dt.day} {_format_date(day_str).split()[1]})"
-
-        if not day_lessons:
-            blocks.append(f"<b>{day_title}</b>: <i>Пар нет</i>")
-            continue
-
-        day_lessons_sorted = sorted(day_lessons, key=lambda x: x.get("номерЗанятия", 0))
-        lines = [f"<b>{day_title}</b>:"]
-        for l in day_lessons_sorted:
-            num = l.get("номерЗанятия", "?")
-            subj = l.get("дисциплина", "").strip()
-            aud = l.get("аудитория", "").strip()
-            lines.append(f"  • {num} пара: {subj} (ауд. {aud})")
-        blocks.append("\n".join(lines))
-
-    full_text = "🗓 <b>Расписание на текущую неделю:</b>\n\n" + "\n\n".join(blocks)
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📲 Открыть в приложении", url=f"{APP_REDIRECT_URL}?student_id={student_id}")]
-    ])
+    full_text = _format_week_schedule(lessons, week_offset=week_offset)
+    keyboard = get_week_inline_keyboard(student_id, week_offset=week_offset)
     await message.answer(full_text, parse_mode=ParseMode.HTML, reply_markup=keyboard)
+
+
+@dp.message(F.text.in_({"🗓 Вся неделя", "🗓 Текущая неделя", "текущая неделя", "вся неделя", "эта неделя"}))
+async def handle_current_week(message: types.Message):
+    await _show_week_schedule(message, week_offset=0)
+
+
+@dp.message(F.text.in_({"🗓 Следующая неделя", "🗓 След. неделя", "следующая неделя", "след неделя", "след. неделя"}))
+async def handle_next_week(message: types.Message):
+    await _show_week_schedule(message, week_offset=1)
+
+
+@dp.callback_query(F.data.startswith("week:"))
+async def handle_callback_week(call: types.CallbackQuery):
+    if _db is None:
+        await call.answer()
+        return
+    parts = call.data.split(":")
+    if len(parts) < 3:
+        await call.answer()
+        return
+    try:
+        week_offset = int(parts[1])
+        student_id = parts[2]
+    except ValueError:
+        await call.answer()
+        return
+
+    cached = _db.get_schedule(f"student_{student_id}")
+    if not cached:
+        loop = asyncio.get_running_loop()
+        res = await loop.run_in_executor(None, fetch_schedule, student_id)
+        if res.success and res.data:
+            _db.save_schedule(f"student_{student_id}", "student", res.data, res.upload_date)
+            cached = _db.get_schedule(f"student_{student_id}")
+
+    if not cached:
+        await call.answer("Расписание не найдено в кэше", show_alert=True)
+        return
+
+    lessons = extract_lessons(cached["data"])
+    text = _format_week_schedule(lessons, week_offset=week_offset)
+    keyboard = get_week_inline_keyboard(student_id, week_offset=week_offset)
+
+    try:
+        await call.message.edit_text(text, parse_mode=ParseMode.HTML, reply_markup=keyboard)
+    except Exception:
+        pass
+    await call.answer()
 
 
 @dp.message(F.text == "⚙️ Моя подписка")
@@ -506,13 +718,63 @@ async def handle_callback_unsubscribe(call: types.CallbackQuery):
 
 
 @dp.message(F.text)
-async def handle_student_id_input(message: types.Message):
-    """Обработка ввода числового ID (например, 347338) или ссылки с edu.donstu.ru (idStudent=347338)."""
+async def handle_text_input(message: types.Message):
+    """
+    Универсальный обработчик текстовых сообщений:
+    1. Просмотр пар по числу/дате ('28', '5', '05', '28.09', '5 октября').
+    2. Привязка ID студента ('347338' или ссылка экспорта).
+    """
     if _db is None or not message.text:
         return
     raw_text = message.text.strip()
 
-    # Извлекаем ID либо из ссылки idStudent=XXXXXX, либо из чистого числа
+    # 1. Проверяем, ввел ли пользователь число или дату
+    target_dt = parse_date_query(raw_text)
+    if target_dt:
+        chat_id = message.chat.id
+        sub = _db.get_telegram_subscriber(chat_id)
+        target_str = target_dt.strftime("%Y-%m-%d")
+        target_formatted = _format_date(target_str)
+
+        if not sub or not sub.get("is_active"):
+            await message.answer(
+                f"📅 Вы запросили расписание на <b>{target_formatted}</b>.\n\n"
+                f"⚠️ Чтобы просматривать расписание, сначала отправьте свой 6-значный <b>ID студента</b> "
+                f"(например, <code>347338</code>) или ссылку экспорта с сайта ДГТУ.\n\n"
+                f"{ID_HELP_TEXT}",
+                parse_mode=ParseMode.HTML,
+                disable_web_page_preview=True,
+                reply_markup=get_apk_download_keyboard(),
+            )
+            return
+
+        student_id = sub["student_id"]
+        cached = _db.get_schedule(f"student_{student_id}")
+        if not cached:
+            loop = asyncio.get_running_loop()
+            res = await loop.run_in_executor(None, fetch_schedule, student_id)
+            if res.success and res.data:
+                _db.save_schedule(f"student_{student_id}", "student", res.data, res.upload_date)
+                cached = _db.get_schedule(f"student_{student_id}")
+
+        if not cached:
+            await message.answer("Не удалось загрузить расписание. Попробуйте позже.")
+            return
+
+        lessons = extract_lessons(cached["data"])
+        day_lessons = [l for l in lessons if l.get("дата", "").startswith(target_str)]
+        text = _format_day_schedule(day_lessons, target_formatted)
+
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(
+                text="📲 Открыть в приложении",
+                url=f"{APP_REDIRECT_URL}?student_id={student_id}&date={target_str}"
+            )]
+        ])
+        await message.answer(text, parse_mode=ParseMode.HTML, reply_markup=keyboard)
+        return
+
+    # 2. Проверяем ввод ID студента (4-8 цифр или idStudent=XXXXXX)
     match_url = re.search(r"idStudent=(\d{4,8})", raw_text, re.IGNORECASE)
     if match_url:
         student_id = match_url.group(1)
@@ -520,9 +782,11 @@ async def handle_student_id_input(message: types.Message):
         student_id = raw_text
     else:
         await message.answer(
-            f"🤔 Я не распознал команду или ID студента.\n"
-            f"Пожалуйста, отправьте ваш 6-значный <b>ID студента</b> (только цифры, например <code>347338</code>) "
-            f"или ссылку экспорта с сайта ДГТУ.\n\n"
+            f"🤔 Я не распознал команду или число.\n\n"
+            f"💡 <b>Вы можете:</b>\n"
+            f"• Написать <b>число</b> (например, <code>28</code>, <code>5</code>, <code>28.09</code> или <code>5 октября</code>) — покажу пары на этот день.\n"
+            f"• Нажать кнопки в меню: <b>Сегодня</b>, <b>Завтра</b>, <b>Текущая неделя</b>, <b>Следующая неделя</b>.\n"
+            f"• Отправить 6-значный <b>ID студента</b> (например, <code>347338</code>) для привязки расписания.\n\n"
             f"{ID_HELP_TEXT}",
             parse_mode=ParseMode.HTML,
             disable_web_page_preview=True,
@@ -550,7 +814,8 @@ async def handle_student_id_input(message: types.Message):
         f"✅ <b>ID успешно подключен!</b>\n\n"
         f"• <b>ID студента:</b> <code>{student_id}</code>\n"
         f"• <b>Группа:</b> <b>{group_name}</b>\n\n"
-        f"Уведомления об изменениях расписания будут приходить сюда моментально!",
+        f"Уведомления об изменениях расписания будут приходить сюда моментально!\n\n"
+        f"Используйте кнопки меню или напишите число для просмотра пар.",
         parse_mode=ParseMode.HTML,
         reply_markup=get_main_keyboard()
     )
