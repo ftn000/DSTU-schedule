@@ -305,6 +305,29 @@ def get_week_inline_keyboard(student_id: str, week_offset: int = 0) -> InlineKey
     )
 
 
+WORD_NUMS = {
+    "один": 1, "одну": 1,
+    "два": 2, "две": 2,
+    "три": 3,
+    "четыре": 4,
+    "пять": 5,
+    "шесть": 6,
+    "семь": 7,
+    "восемь": 8,
+    "девять": 9,
+    "десять": 10,
+}
+
+DAYS_OF_WEEK_MAP = {
+    "пн": 0, "пон": 0, "понедельник": 0,
+    "вт": 1, "вторник": 1,
+    "ср": 2, "среда": 2, "среду": 2,
+    "чт": 3, "чет": 3, "четверг": 3,
+    "пт": 4, "пят": 4, "пятница": 4, "пятницу": 4,
+    "сб": 5, "суб": 5, "суббота": 5, "субботу": 5,
+    "вс": 6, "воск": 6, "воскресенье": 6,
+}
+
 MONTHS_RU_MAP = {
     "янв": 1, "января": 1, "январь": 1,
     "фев": 2, "февраля": 2, "февраль": 2,
@@ -328,32 +351,119 @@ def _safe_date(year: int, month: int, day: int) -> Optional[datetime]:
         return None
 
 
-def parse_date_query(raw_text: str) -> Optional[datetime]:
+def parse_week_query(raw_text: str) -> Optional[int]:
+    """
+    Распознает текстовый запрос расписания на неделю:
+    - 0: текущая неделя ('на этой неделе', 'текущая неделя', 'вся неделя', 'неделя')
+    - 1: следующая неделя ('на следующей неделе', 'след неделя')
+    - -1: прошлая неделя ('на прошлой неделе', 'пред неделя')
+    """
+    text = raw_text.strip().lower()
+
+    if text.startswith("через "):
+        return None
+
+    if "недел" not in text and text not in ("неделя", "на неделю", "неделю"):
+        return None
+
+    if any(k in text for k in ("след", "будущ", "следующ")):
+        return 1
+
+    if any(k in text for k in ("прош", "пред", "предыдущ")):
+        return -1
+
+    if any(k in text for k in ("эт", "текущ", "вся", "всю", "на этой", "на текущей")) or text in (
+        "неделя", "на неделю", "неделю", "пары на неделю", "расписание на неделю"
+    ):
+        return 0
+
+    return None
+
+
+def parse_date_query(raw_text: str, base_dt: Optional[datetime] = None) -> Optional[datetime]:
     """
     Распознает дату в сообщении пользователя:
+    - Относительные дни ('сегодня', 'завтра', 'послезавтра', 'вчера', 'позавчера')
+    - Смещения ('через день', 'через два дня', 'через 3 дня', 'через неделю')
+    - Дни недели ('понедельник', 'во вторник', 'в среду', 'в следующий четверг')
     - Число месяца от 1 до 31 ('28', '5', '05'). Если число уже прошло в текущем месяце — берет следующий месяц.
-    - Дата в формате ДД.ММ или ДД.ММ.ГГГГ ('28.09', '28/09', '28.09.2026').
-    - Дата с русским названием месяца ('28 сентября', '5 окт', '12 мая 2026').
-    - Фразы с префиксами: 'пары на 28', 'расписание 5', 'на 29 число'.
+    - Дата в формате ДД.ММ или ДД.ММ.ГГГГ ('28.09', '28/09', '28.09.2026')
+    - Дата с русским названием месяца ('28 сентября', '5 окт')
     """
     text = raw_text.strip().lower()
 
     # Срезаем типовые вводные слова и приставки
-    prefixes = [
+    for p in [
+        "какие пары на", "какие пары", "что у нас на", "что у нас",
         "расписание на", "расписание", "пары на", "пары", "пара на", "пара",
-        "занятия на", "занятия", "уроки на", "уроки", "на"
-    ]
-    for p in prefixes:
+        "занятия на", "занятия", "уроки на", "уроки", "на", "в", "во"
+    ]:
         if text.startswith(p + " "):
             text = text[len(p):].strip()
+            for p2 in ["в", "во", "на"]:
+                if text.startswith(p2 + " "):
+                    text = text[len(p2):].strip()
             break
 
-    # Срезаем суффиксы «число», «числа»
     text = re.sub(r"\s+числ[оа]$", "", text).strip()
+    now = base_dt or datetime.now()
 
-    now = datetime.now()
+    # 1. Прямые относительные слова
+    if text in ("сегодня", "седня", "сейчас"):
+        return now
+    if text in ("завтра", "завтрашний день"):
+        return now + timedelta(days=1)
+    if text in ("послезавтра",):
+        return now + timedelta(days=2)
+    if text in ("послепослезавтра",):
+        return now + timedelta(days=3)
+    if text in ("вчера",):
+        return now - timedelta(days=1)
+    if text in ("позавчера",):
+        return now - timedelta(days=2)
 
-    # 1. Формат: число + название месяца (например "28 сентября", "5 окт", "12 мая 2026")
+    # 2. 'через день', 'через N дня / дней / неделю / 2 недели'
+    if text == "через день":
+        return now + timedelta(days=1)
+
+    m_weeks = re.match(r"^через\s+(?:(\d+|[а-яё]+)\s+)?недел[юиея]$", text)
+    if m_weeks:
+        w_token = m_weeks.group(1)
+        w_count = 1
+        if w_token:
+            w_count = int(w_token) if w_token.isdigit() else WORD_NUMS.get(w_token, 1)
+        return now + timedelta(weeks=w_count)
+
+    m_days = re.match(r"^через\s+(\d+|[а-яё]+)\s+(?:дн[яей]|дня|дней|день)$", text)
+    if m_days:
+        token = m_days.group(1)
+        days = int(token) if token.isdigit() else WORD_NUMS.get(token, 1)
+        return now + timedelta(days=days)
+
+    # 3. Дни недели
+    m_dow = re.match(r"^(?:(следующ(?:ий|ую|ая|ее)|след|этот|эту|эта|этом)\s+)?([а-яё]+)$", text)
+    if m_dow:
+        modifier = m_dow.group(1) or ""
+        dow_token = m_dow.group(2)
+        if dow_token in DAYS_OF_WEEK_MAP:
+            target_dow = DAYS_OF_WEEK_MAP[dow_token]
+            current_dow = now.weekday()
+
+            if "след" in modifier:
+                days_ahead = (target_dow - current_dow) % 7
+                if days_ahead == 0:
+                    days_ahead = 7
+                else:
+                    days_ahead += 7
+            elif "эт" in modifier:
+                days_ahead = target_dow - current_dow
+            else:
+                days_ahead = (target_dow - current_dow) % 7
+                if days_ahead == 0:
+                    days_ahead = 0
+            return now + timedelta(days=days_ahead)
+
+    # 4. Формат: число + название месяца (например "28 сентября", "5 окт", "12 мая 2026")
     m_text = re.match(r"^0?([1-9]|[12]\d|3[01])\s+([а-яё]+)(?:\s+(\d{2,4}))?$", text)
     if m_text:
         day = int(m_text.group(1))
@@ -375,7 +485,7 @@ def parse_date_query(raw_text: str) -> Optional[datetime]:
             if dt:
                 return dt
 
-    # 2. Формат: ДД.ММ или ДД.ММ.ГГГГ (через точку, слэш или дефис)
+    # 5. Формат: ДД.ММ или ДД.ММ.ГГГГ (через точку, слэш или дефис)
     m_dot = re.match(r"^0?([1-9]|[12]\d|3[01])[./-]0?([1-9]|1[012])(?:[./-](\d{2,4}))?$", text)
     if m_dot:
         day = int(m_dot.group(1))
@@ -391,7 +501,7 @@ def parse_date_query(raw_text: str) -> Optional[datetime]:
         if dt:
             return dt
 
-    # 3. Число месяца: от 1 до 31 (например "28", "5", "05")
+    # 6. Число месяца: от 1 до 31 (например "28", "5", "05")
     m_num = re.match(r"^0?([1-9]|[12]\d|3[01])$", text)
     if m_num:
         day = int(m_num.group(1))
@@ -399,7 +509,6 @@ def parse_date_query(raw_text: str) -> Optional[datetime]:
             dt = _safe_date(now.year, now.month, day)
             if dt:
                 return dt
-            # Если в текущем месяце нет такого дня (например 31 сентября), переходим к следующему
             next_m = now.month + 1
             next_y = now.year
             if next_m > 12:
@@ -407,7 +516,6 @@ def parse_date_query(raw_text: str) -> Optional[datetime]:
                 next_y += 1
             return _safe_date(next_y, next_m, day)
         else:
-            # Число уже прошло в текущем месяце -> берем следующий месяц
             next_m = now.month + 1
             next_y = now.year
             if next_m > 12:
@@ -721,14 +829,21 @@ async def handle_callback_unsubscribe(call: types.CallbackQuery):
 async def handle_text_input(message: types.Message):
     """
     Универсальный обработчик текстовых сообщений:
-    1. Просмотр пар по числу/дате ('28', '5', '05', '28.09', '5 октября').
-    2. Привязка ID студента ('347338' или ссылка экспорта).
+    1. Недельные запросы ('на этой неделе', 'следующая неделя').
+    2. Просмотр пар по числу/дате/дню недели ('сегодня', 'завтра', 'во вторник', 'через два дня', '28').
+    3. Привязка ID студента ('347338' или ссылка экспорта).
     """
     if _db is None or not message.text:
         return
     raw_text = message.text.strip()
 
-    # 1. Проверяем, ввел ли пользователь число или дату
+    # 1. Проверяем запросы на просмотр недели
+    week_offset = parse_week_query(raw_text)
+    if week_offset is not None:
+        await _show_week_schedule(message, week_offset=week_offset)
+        return
+
+    # 2. Проверяем ввод числа, даты, дня недели или относительного дня
     target_dt = parse_date_query(raw_text)
     if target_dt:
         chat_id = message.chat.id
@@ -774,7 +889,7 @@ async def handle_text_input(message: types.Message):
         await message.answer(text, parse_mode=ParseMode.HTML, reply_markup=keyboard)
         return
 
-    # 2. Проверяем ввод ID студента (4-8 цифр или idStudent=XXXXXX)
+    # 3. Проверяем ввод ID студента (4-8 цифр или idStudent=XXXXXX)
     match_url = re.search(r"idStudent=(\d{4,8})", raw_text, re.IGNORECASE)
     if match_url:
         student_id = match_url.group(1)
@@ -782,11 +897,13 @@ async def handle_text_input(message: types.Message):
         student_id = raw_text
     else:
         await message.answer(
-            f"🤔 Я не распознал команду или число.\n\n"
-            f"💡 <b>Вы можете:</b>\n"
-            f"• Написать <b>число</b> (например, <code>28</code>, <code>5</code>, <code>28.09</code> или <code>5 октября</code>) — покажу пары на этот день.\n"
-            f"• Нажать кнопки в меню: <b>Сегодня</b>, <b>Завтра</b>, <b>Текущая неделя</b>, <b>Следующая неделя</b>.\n"
-            f"• Отправить 6-значный <b>ID студента</b> (например, <code>347338</code>) для привязки расписания.\n\n"
+            f"🤔 Я не распознал команду или дату.\n\n"
+            f"💡 <b>Вы можете написать:</b>\n"
+            f"• <b>Относительный день:</b> <code>сегодня</code>, <code>завтра</code>, <code>послезавтра</code>, <code>через 2 дня</code>\n"
+            f"• <b>День недели:</b> <code>понедельник</code>, <code>во вторник</code>, <code>следующая пятница</code>\n"
+            f"• <b>Число или дату:</b> <code>28</code>, <code>05.10</code>, <code>28 сентября</code>\n"
+            f"• <b>Неделю:</b> <code>на этой неделе</code>, <code>на следующей неделе</code>\n"
+            f"• Или отправить 6-значный <b>ID студента</b> (например, <code>347338</code>).\n\n"
             f"{ID_HELP_TEXT}",
             parse_mode=ParseMode.HTML,
             disable_web_page_preview=True,
