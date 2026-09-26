@@ -26,7 +26,7 @@ from aiogram.enums import ParseMode
 
 from database import Database
 from fetcher import fetch_schedule
-from diff_engine import _format_date, extract_lessons
+from diff_engine import _format_date, extract_lessons, MONTHS_RU
 
 logger = logging.getLogger("DSTU_Telegram_Bot")
 
@@ -240,6 +240,53 @@ def _format_day_schedule(lessons: List[Dict[str, Any]], title_date: str) -> str:
         lines.append("")
 
     return "\n".join(lines).strip()
+
+
+def get_day_inline_keyboard(student_id: str, date_str: str) -> InlineKeyboardMarkup:
+    """Генерирует инлайн-кнопки навигации по дням (◀️ / ▶️) и ссылку на приложение."""
+    dt = datetime.strptime(date_str, "%Y-%m-%d")
+    prev_dt = dt - timedelta(days=1)
+    next_dt = dt + timedelta(days=1)
+
+    prev_str = prev_dt.strftime("%Y-%m-%d")
+    next_str = next_dt.strftime("%Y-%m-%d")
+
+    now = datetime.now()
+    today_str = now.strftime("%Y-%m-%d")
+    tomorrow_str = (now + timedelta(days=1)).strftime("%Y-%m-%d")
+    yesterday_str = (now - timedelta(days=1)).strftime("%Y-%m-%d")
+
+    # Формируем читаемые подписи для кнопок
+    if prev_str == yesterday_str:
+        prev_label = "◀️ Вчера"
+    elif prev_str == today_str:
+        prev_label = "◀️ Сегодня"
+    else:
+        prev_label = f"◀️ {prev_dt.day} {MONTHS_RU.get(prev_dt.month, '')}"
+
+    if next_str == tomorrow_str:
+        next_label = "Завтра ▶️"
+    elif next_str == today_str:
+        next_label = "Сегодня ▶️"
+    else:
+        next_label = f"{next_dt.day} {MONTHS_RU.get(next_dt.month, '')} ▶️"
+
+    nav_row = [
+        InlineKeyboardButton(text=prev_label, callback_data=f"day:{prev_str}:{student_id}")
+    ]
+    if date_str != today_str and prev_str != today_str and next_str != today_str:
+        nav_row.append(InlineKeyboardButton(text="📅 Сегодня", callback_data=f"day:{today_str}:{student_id}"))
+    nav_row.append(InlineKeyboardButton(text=next_label, callback_data=f"day:{next_str}:{student_id}"))
+
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            nav_row,
+            [InlineKeyboardButton(
+                text="📲 Открыть в приложении",
+                url=f"{APP_REDIRECT_URL}?student_id={student_id}&date={date_str}"
+            )],
+        ]
+    )
 
 
 def _format_week_schedule(lessons: List[Dict[str, Any]], week_offset: int = 0) -> str:
@@ -647,10 +694,7 @@ async def handle_today(message: types.Message):
 
     today_lessons = [l for l in lessons if l.get("дата", "").startswith(today_str)]
     text = _format_day_schedule(today_lessons, today_formatted)
-
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📲 Открыть в приложении", url=f"{APP_REDIRECT_URL}?student_id={student_id}&date={today_str}")]
-    ])
+    keyboard = get_day_inline_keyboard(student_id, today_str)
     await message.answer(text, parse_mode=ParseMode.HTML, reply_markup=keyboard)
 
 
@@ -682,10 +726,7 @@ async def handle_tomorrow(message: types.Message):
 
     tomorrow_lessons = [l for l in lessons if l.get("дата", "").startswith(tomorrow_str)]
     text = _format_day_schedule(tomorrow_lessons, tomorrow_formatted)
-
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📲 Открыть в приложении", url=f"{APP_REDIRECT_URL}?student_id={student_id}&date={tomorrow_str}")]
-    ])
+    keyboard = get_day_inline_keyboard(student_id, tomorrow_str)
     await message.answer(text, parse_mode=ParseMode.HTML, reply_markup=keyboard)
 
 
@@ -764,6 +805,44 @@ async def handle_callback_week(call: types.CallbackQuery):
     lessons = extract_lessons(cached["data"])
     text = _format_week_schedule(lessons, week_offset=week_offset)
     keyboard = get_week_inline_keyboard(student_id, week_offset=week_offset)
+
+    try:
+        await call.message.edit_text(text, parse_mode=ParseMode.HTML, reply_markup=keyboard)
+    except Exception:
+        pass
+    await call.answer()
+
+
+@dp.callback_query(F.data.startswith("day:"))
+async def handle_callback_day(call: types.CallbackQuery):
+    if _db is None:
+        await call.answer()
+        return
+    parts = call.data.split(":")
+    if len(parts) < 3:
+        await call.answer()
+        return
+
+    target_date_str = parts[1]
+    student_id = parts[2]
+
+    cached = _db.get_schedule(f"student_{student_id}")
+    if not cached:
+        loop = asyncio.get_running_loop()
+        res = await loop.run_in_executor(None, fetch_schedule, student_id)
+        if res.success and res.data:
+            _db.save_schedule(f"student_{student_id}", "student", res.data, res.upload_date)
+            cached = _db.get_schedule(f"student_{student_id}")
+
+    if not cached:
+        await call.answer("Расписание не найдено", show_alert=True)
+        return
+
+    lessons = extract_lessons(cached["data"])
+    day_lessons = [l for l in lessons if l.get("дата", "").startswith(target_date_str)]
+    target_formatted = _format_date(target_date_str)
+    text = _format_day_schedule(day_lessons, target_formatted)
+    keyboard = get_day_inline_keyboard(student_id, target_date_str)
 
     try:
         await call.message.edit_text(text, parse_mode=ParseMode.HTML, reply_markup=keyboard)
@@ -880,12 +959,7 @@ async def handle_text_input(message: types.Message):
         day_lessons = [l for l in lessons if l.get("дата", "").startswith(target_str)]
         text = _format_day_schedule(day_lessons, target_formatted)
 
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(
-                text="📲 Открыть в приложении",
-                url=f"{APP_REDIRECT_URL}?student_id={student_id}&date={target_str}"
-            )]
-        ])
+        keyboard = get_day_inline_keyboard(student_id, target_str)
         await message.answer(text, parse_mode=ParseMode.HTML, reply_markup=keyboard)
         return
 
