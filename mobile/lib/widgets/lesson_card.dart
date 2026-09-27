@@ -117,7 +117,7 @@ class LessonCard extends StatelessWidget {
           border: Border.all(color: Colors.amber.shade700),
         ),
         child: Text(
-          isSplit ? '⚠️ СМЕНА АУД.' : '⚠️ АУДИТОРИЯ ПЕРЕНЕСЕНА',
+          '⚠️ СМЕНА АУД.',
           style: TextStyle(
             fontSize: 10,
             fontWeight: FontWeight.bold,
@@ -134,7 +134,7 @@ class LessonCard extends StatelessWidget {
           border: Border.all(color: Colors.purple.shade600),
         ),
         child: Text(
-          isSplit ? '👤 ЗАМЕНА ПРЕПОД.' : '👤 ПРЕПОДАВАТЕЛЬ ЗАМЕНЕН',
+          '👤 ЗАМЕНА ПРЕПОД.',
           style: TextStyle(
             fontSize: 10,
             fontWeight: FontWeight.bold,
@@ -151,7 +151,7 @@ class LessonCard extends StatelessWidget {
           border: Border.all(color: Colors.teal.shade600),
         ),
         child: Text(
-          isSplit ? '⏰ ВРЕМЯ' : '⏰ ВРЕМЯ ИЗМЕНЕНО',
+          '⏰ СМЕНА ВРЕМЕНИ',
           style: TextStyle(
             fontSize: 10,
             fontWeight: FontWeight.bold,
@@ -210,8 +210,8 @@ class LessonCard extends StatelessWidget {
               spacing: 4,
               runSpacing: 4,
               children: [
-                if (statusBadge != null) statusBadge,
                 typeBadge,
+                if (statusBadge != null) statusBadge,
               ],
             ),
             const SizedBox(height: 6),
@@ -375,26 +375,22 @@ class LessonCard extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // Верхние бейджи
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                // Верхние адаптивные бейджи (тип, статус и аудитория в едином Wrap)
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 4,
+                  crossAxisAlignment: WrapCrossAlignment.center,
                   children: [
-                    Wrap(
-                      spacing: 6,
-                      runSpacing: 4,
-                      children: [
-                        if (statusBadge != null) statusBadge,
-                        typeBadge,
-                      ],
-                    ),
+                    typeBadge,
+                    if (statusBadge != null) statusBadge,
 
                     // Бейдж аудитории
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
                       decoration: BoxDecoration(
                         color: isRoomChanged
                             ? Colors.amber.withValues(alpha: 0.15)
-                            : theme.colorScheme.surface,
+                            : theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.35),
                         borderRadius: BorderRadius.circular(6),
                         border: Border.all(
                           color: isRoomChanged
@@ -405,7 +401,7 @@ class LessonCard extends StatelessWidget {
                       child: Text(
                         '📍 ${lesson.room.isNotEmpty ? lesson.room : "Ауд. не указана"}',
                         style: TextStyle(
-                          fontSize: 11,
+                          fontSize: 10,
                           fontWeight: FontWeight.w600,
                           decoration: isCancelled ? TextDecoration.lineThrough : null,
                           color: isRoomChanged
