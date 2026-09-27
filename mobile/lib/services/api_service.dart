@@ -249,6 +249,26 @@ class ApiService {
       final changeType = (ch['change_type'] as String? ?? ch['type'] as String? ?? '').toUpperCase();
       final lessonId = ch['lesson_id'] as int?;
       final details = ch['details'] as String? ?? ch['human_message'] as String? ?? '';
+      final detectedAtStr = ch['detected_at'] as String?;
+      DateTime? detectedAt;
+      if (detectedAtStr != null && detectedAtStr.isNotEmpty) {
+        detectedAt = DateTime.tryParse(detectedAtStr);
+      }
+
+      // Кулдаун 24 часа для отображения карточки как "Добавлена пара"
+      bool isRecentAdd = true;
+      if (detectedAt != null) {
+        final age = now.difference(detectedAt);
+        if (age.inHours >= 24 || age.isNegative) {
+          isRecentAdd = false;
+        }
+      } else {
+        final lDate = (ch['lesson_date'] as String? ?? ch['date'] as String? ?? '').split('T')[0];
+        final dt = DateTime.tryParse(lDate);
+        if (dt != null && now.difference(dt).inHours >= 24) {
+          isRecentAdd = false;
+        }
+      }
 
       if (lessonId != null) {
         switch (changeType) {
@@ -266,7 +286,9 @@ class ApiService {
             break;
           case 'ADDED':
           case 'NEW':
-            addedLessonIds.add(lessonId);
+            if (isRecentAdd) {
+              addedLessonIds.add(lessonId);
+            }
             break;
         }
       }
@@ -349,6 +371,23 @@ class ApiService {
       final chNum = ch['lesson_num'] as int? ?? 0;
       final chSubj = normSubj(ch['subject'] as String? ?? '');
       final details = ch['details'] as String? ?? ch['human_message'] as String? ?? '';
+      final detectedAtStr = ch['detected_at'] as String?;
+      DateTime? detectedAt;
+      if (detectedAtStr != null && detectedAtStr.isNotEmpty) {
+        detectedAt = DateTime.tryParse(detectedAtStr);
+      }
+      bool isRecentAdd = true;
+      if (detectedAt != null) {
+        final age = now.difference(detectedAt);
+        if (age.inHours >= 24 || age.isNegative) {
+          isRecentAdd = false;
+        }
+      } else {
+        final dt = DateTime.tryParse(chDate);
+        if (dt != null && now.difference(dt).inHours >= 24) {
+          isRecentAdd = false;
+        }
+      }
 
       if (chDate.isEmpty || chNum == 0 || chSubj.isEmpty) continue;
 
@@ -364,6 +403,8 @@ class ApiService {
           } else if (changeType == 'TIME_CHANGED' && !lesson.isTimeChanged) {
             lesson.isTimeChanged = true;
             lesson.changeNote = details.isNotEmpty ? details : 'Время изменено';
+          } else if ((changeType == 'ADDED' || changeType == 'NEW') && !lesson.isNew && isRecentAdd) {
+            lesson.isNew = true;
           }
         }
       }

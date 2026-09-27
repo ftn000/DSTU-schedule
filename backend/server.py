@@ -146,7 +146,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="DSTU Schedule API",
     description="Бэкенд сервис мониторинга и кэширования расписания ДГТУ",
-    version="1.2.1",
+    version="1.2.2",
     lifespan=lifespan
 )
 
@@ -220,7 +220,13 @@ async def get_schedule(
         if cached["hash"] != new_hash:
             changes = compare_schedules(cached["data"], fetch_res.data, only_upcoming=True)
             if changes:
-                db.log_changes(target_id, [c.to_dict() for c in changes])
+                changes_dicts = [c.to_dict() for c in changes]
+                db.log_changes(target_id, changes_dicts)
+                # Отправляем уведомления подписчикам в Telegram
+                try:
+                    asyncio.create_task(broadcast_schedule_changes(target_id, changes_dicts))
+                except Exception as tg_err:
+                    logger.error(f"Ошибка при отправке Telegram-уведомлений: {tg_err}")
 
     db.save_schedule(
         target_id=target_id,
