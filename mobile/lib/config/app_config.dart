@@ -1,7 +1,7 @@
 class AppConfig {
   static const String appName = 'ДГТУ Расписание';
-  static const String appVersion = '1.4.8';
-  static const int buildNumber = 14;
+  static const String appVersion = '1.4.9';
+  static const int buildNumber = 15;
   static const String telegramBotUsername = 'dstu_schedule_notify_bot';
 
   static String get fullVersionString => 'v$appVersion (сборка $buildNumber)';
