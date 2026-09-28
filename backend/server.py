@@ -12,6 +12,8 @@ import os
 import sys
 import logging
 import asyncio
+import hashlib
+import json
 from typing import Optional, List, Dict, Any
 from contextlib import asynccontextmanager
 
@@ -24,7 +26,12 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from database import Database
 from fetcher import fetch_schedule
 from diff_engine import compare_schedules, format_push_notification, extract_lessons
-from telegram_bot import start_bot_polling, set_database, broadcast_schedule_changes
+from telegram_bot import (
+    start_bot_polling, 
+    set_database, 
+    broadcast_schedule_changes, 
+    broadcast_app_update
+)
 
 
 # Настройка логирования
@@ -120,6 +127,76 @@ async def periodic_check_job():
             await asyncio.sleep(1.0)
 
     logger.info("--- Периодическая проверка завершена ---")
+    
+    # Проверка появления нового билда APK
+    try:
+        await check_and_notify_apk_update()
+    except Exception as e:
+        logger.error(f"Ошибка при периодической проверке обновления APK: {e}")
+
+
+def get_apk_file_hash(apk_path: str) -> Optional[str]:
+    """Вычисляет SHA-256 хеш APK файла для точного отслеживания релизов."""
+    if not os.path.exists(apk_path):
+        return None
+    hasher = hashlib.sha256()
+    with open(apk_path, "rb") as f:
+        while chunk := f.read(65536):
+            hasher.update(chunk)
+    return hasher.hexdigest()
+
+
+def get_app_version_meta() -> Dict[str, Any]:
+    """Считывает метаданные актуальной версии из version.json."""
+    meta_path = os.path.join(os.path.dirname(__file__), "version.json")
+    if os.path.exists(meta_path):
+        try:
+            with open(meta_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {"version": "1.4.9", "build_number": 15}
+
+
+async def check_and_notify_apk_update(force: bool = False) -> int:
+    """
+    Проверяет, появился ли на сервере новый файл APK (по SHA-256 хешу).
+    Если хеш изменился (или force=True), рассылает уведомление всем пользователям в Telegram.
+    """
+    apk_path = os.path.join(os.path.dirname(__file__), "DSTU-schedule.apk")
+    if not os.path.exists(apk_path):
+        apk_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "DSTU-schedule.apk")
+    if not os.path.exists(apk_path):
+        logger.warning(f"APK файл не найден по пути: {apk_path}")
+        return 0
+
+    current_hash = get_apk_file_hash(apk_path)
+    if not current_hash:
+        return 0
+
+    last_notified_hash = db.get_setting("last_notified_apk_hash")
+    meta = get_app_version_meta()
+    version = meta.get("version", "1.4.9")
+    build_num = meta.get("build_number", 15)
+    changelog = meta.get("changelog")
+
+    if force or (current_hash != last_notified_hash):
+        logger.info(
+            f"🚀 Обнаружен новый билд APK {version}+{build_num}! "
+            f"(хеш: {current_hash[:10]}..., прошлый: {str(last_notified_hash)[:10]}...). "
+            f"Запуск рассылки уведомлений в Telegram..."
+        )
+        delivered = await broadcast_app_update(
+            version=version,
+            build_number=build_num,
+            changelog=changelog
+        )
+        db.set_setting("last_notified_apk_hash", current_hash)
+        db.set_setting("last_notified_apk_version", f"{version}+{build_num}")
+        logger.info(f"Рассылка релиза {version}+{build_num} завершена: доставлено {delivered} подписчикам.")
+        return delivered
+
+    return 0
 
 
 @asynccontextmanager
@@ -131,6 +208,16 @@ async def lifespan(app: FastAPI):
     # Фоновый запуск Telegram-бота (@dstu_schedule_notify_bot)
     bot_task = asyncio.create_task(start_bot_polling())
     logger.info("Telegram-бот успешно инициализирован в фоне")
+
+    # Проверка и рассылка информации о новом APK через 4 секунды после старта бота
+    async def delayed_apk_check():
+        await asyncio.sleep(4.0)
+        try:
+            await check_and_notify_apk_update()
+        except Exception as e:
+            logger.error(f"Ошибка при стартовой проверке релиза APK: {e}")
+
+    asyncio.create_task(delayed_apk_check())
 
     # Опрос каждые 45 минут (в дневное время)
     scheduler.add_job(periodic_check_job, "interval", minutes=45, id="schedule_checker")
@@ -146,7 +233,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="DSTU Schedule API",
     description="Бэкенд сервис мониторинга и кэширования расписания ДГТУ",
-    version="1.2.3",
+    version="1.2.4",
     lifespan=lifespan
 )
 
@@ -286,6 +373,17 @@ async def manual_sync_trigger():
     """Принудительный запуск фоновой проверки всех студентов прямо сейчас."""
     asyncio.create_task(periodic_check_job())
     return {"status": "ok", "message": "Фоновая синхронизация запущена"}
+
+
+@app.post("/api/broadcast-apk-update")
+async def trigger_apk_update_broadcast(force: bool = Query(False, description="Принудительно отправить даже если хеш не изменился")):
+    """Ручной запуск проверки и рассылки уведомления о новой версии приложения в Telegram."""
+    delivered = await check_and_notify_apk_update(force=force)
+    return {
+        "status": "ok",
+        "delivered_to_users": delivered,
+        "message": f"Оповещение разослано {delivered} подписчикам" if delivered > 0 else "Новый билд не обнаружен (или уже был разослан). Используйте force=true для принудительной отправки."
+    }
 
 
 @app.post("/api/simulate/{student_id}")

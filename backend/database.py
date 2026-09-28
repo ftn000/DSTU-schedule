@@ -87,6 +87,15 @@ class Database:
                     is_active INTEGER DEFAULT 1
                 )
             """)
+
+            # Таблица настроек и метаданных приложения (версии, хеши APK)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS app_settings (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL,
+                    updated_at TIMESTAMP NOT NULL
+                )
+            """)
             
             conn.commit()
 
@@ -279,3 +288,25 @@ class Database:
                     "FROM telegram_subscribers WHERE is_active = 1"
                 )
             return [dict(row) for row in cursor.fetchall()]
+
+    def get_setting(self, key: str, default: Optional[str] = None) -> Optional[str]:
+        """Возвращает строковое значение настройки/метаданных из таблицы app_settings."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT value FROM app_settings WHERE key = ?", (key,))
+            row = cursor.fetchone()
+            return row["value"] if row else default
+
+    def set_setting(self, key: str, value: str):
+        """Сохраняет или обновляет настройку/метаданные в таблице app_settings."""
+        now = datetime.now().isoformat()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO app_settings (key, value, updated_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(key) DO UPDATE SET
+                    value = excluded.value,
+                    updated_at = excluded.updated_at
+            """, (key, str(value), now))
+            conn.commit()

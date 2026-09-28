@@ -70,7 +70,7 @@ def get_main_keyboard() -> ReplyKeyboardMarkup:
         keyboard=[
             [KeyboardButton(text="📅 Сегодня"), KeyboardButton(text="📆 Завтра")],
             [KeyboardButton(text="🗓 Текущая неделя"), KeyboardButton(text="🗓 Следующая неделя")],
-            [KeyboardButton(text="⚙️ Моя подписка")],
+            [KeyboardButton(text="ℹ️ Информация")],
         ],
         resize_keyboard=True,
     )
@@ -851,15 +851,17 @@ async def handle_callback_day(call: types.CallbackQuery):
     await call.answer()
 
 
-@dp.message(F.text == "⚙️ Моя подписка")
+@dp.message(F.text.in_(["ℹ️ Информация", "⚙️ Параметры", "⚙️ Моя подписка", "Информация", "/info"]))
 async def handle_subscription_info(message: types.Message):
     if _db is None:
         return
     sub = _db.get_telegram_subscriber(message.chat.id)
     if not sub or not sub.get("is_active"):
         await message.answer(
-            f"У вас нет активной подписки.\n"
-            f"Отправьте свой 6-значный ID студента (например, <code>347338</code>).\n\n"
+            f"ℹ️ <b>Информация о сервисе ДГТУ Расписание:</b>\n\n"
+            f"У вас пока не привязан ID студента.\n"
+            f"Отправьте сюда свой 6-значный ID студента (например, <code>347338</code>), "
+            f"чтобы получать мгновенные уведомления об отменах, заменах и переносах аудиторий прямо в Telegram!\n\n"
             f"{ID_HELP_TEXT}",
             parse_mode=ParseMode.HTML,
             disable_web_page_preview=True,
@@ -872,17 +874,17 @@ async def handle_subscription_info(message: types.Message):
     group_name = _get_student_group_name(student_id, cached["data"] if cached else None)
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📲 Открыть приложение", url=f"{APP_REDIRECT_URL}?student_id={student_id}")],
+        [InlineKeyboardButton(text="📲 Открыть в приложении", url=f"{APP_REDIRECT_URL}?student_id={student_id}")],
         [InlineKeyboardButton(text="📥 Скачать приложение (.APK)", url=APK_DOWNLOAD_URL)],
         [InlineKeyboardButton(text="❌ Отписаться от уведомлений", callback_data="unsubscribe")],
     ])
 
     text = (
-        f"⚙️ <b>Параметры вашей подписки:</b>\n\n"
+        f"ℹ️ <b>Информация о вашей подписке:</b>\n\n"
         f"• <b>ID студента:</b> <code>{student_id}</code>\n"
         f"• <b>Академическая группа:</b> <b>{group_name}</b>\n"
-        f"• <b>Статус:</b> 🟢 Активна (пуши включены)\n\n"
-        f"Чтобы переключиться на другого студента, просто отправьте сюда новый ID.\n\n"
+        f"• <b>Уведомления:</b> 🟢 Активны (мгновенные оповещения в Telegram)\n\n"
+        f"💡 <i>Чтобы переключиться на другого студента, просто отправьте сюда новый 6-значный ID.</i>\n\n"
         f"{ID_HELP_TEXT}"
     )
     await message.answer(text, parse_mode=ParseMode.HTML, reply_markup=keyboard, disable_web_page_preview=True)
@@ -1090,6 +1092,80 @@ async def broadcast_schedule_changes(target_id: str, changes: List[Dict[str, Any
             logger.error(f"Не удалось отправить уведомление в chat {chat_id}: {e}")
             if "bot was blocked by the user" in str(e).lower() or "user is deactivated" in str(e).lower():
                 _db.unsubscribe_telegram(chat_id)
+
+
+async def broadcast_app_update(
+    version: Optional[str] = None,
+    build_number: Optional[int] = None,
+    changelog: Optional[List[str]] = None,
+) -> int:
+    """
+    Рассылает уведомление всем активным подписчикам Telegram о выходе новой версии приложения.
+    Под каждым сообщением прикрепляется inline-кнопка для прямого скачивания обновлённого APK.
+    """
+    if _db is None or bot is None:
+        return 0
+
+    subscribers = _db.get_telegram_subscribers()
+    if not subscribers:
+        logger.info("Нет активных Telegram-подписчиков для уведомления об обновлении")
+        return 0
+
+    version_str = f"v{version}" if version else "новая версия"
+    if build_number:
+        version_str += f" (сборка {build_number})"
+
+    lines = [
+        "🚀 <b>ВЫШЛО ОБНОВЛЕНИЕ ПРИЛОЖЕНИЯ!</b>\n",
+        f"Доступна новая версия <b>ДГТУ Расписание</b> — <code>{version_str}</code>! 🎉\n"
+    ]
+
+    if changelog and len(changelog) > 0:
+        lines.append("✨ <b>Что нового в этой версии:</b>")
+        for item in changelog:
+            lines.append(f"• {item}")
+        lines.append("")
+    else:
+        lines.append(
+            "✨ <b>Что нового в этой версии:</b>\n"
+            "• Исправлено отображение смены аудиторий и преподавателей\n"
+            "• Добавлен показ предыдущего кабинета прямо на карточке пары\n"
+            "• Улучшена стабильность и быстродействие приложения\n"
+        )
+
+    lines.append(
+        "💡 <i>Нажмите кнопку ниже, чтобы скачать APK-файл и установить обновление поверх текущей версии. "
+        "Все ваши настройки и сохранённые данные сохранятся!</i>"
+    )
+
+    message_text = "\n".join(lines).strip()
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📥 Скачать обновление (.APK)", url=APK_DOWNLOAD_URL)],
+        [InlineKeyboardButton(text="📲 Открыть в приложении", url=APP_REDIRECT_URL)],
+    ])
+
+    logger.info(f"Рассылка уведомления об обновлении {version_str} для {len(subscribers)} подписчиков Telegram...")
+    delivered = 0
+
+    for sub in subscribers:
+        chat_id = sub["chat_id"]
+        try:
+            await bot.send_message(
+                chat_id=chat_id,
+                text=message_text,
+                parse_mode=ParseMode.HTML,
+                reply_markup=keyboard
+            )
+            delivered += 1
+            await asyncio.sleep(0.05)  # Защита от лимитов Telegram (не более 30 сообщ/сек)
+        except Exception as e:
+            logger.error(f"Не удалось доставить уведомление об обновлении в chat {chat_id}: {e}")
+            if "bot was blocked by the user" in str(e).lower() or "user is deactivated" in str(e).lower():
+                _db.unsubscribe_telegram(chat_id)
+
+    logger.info(f"Уведомление об обновлении успешно доставлено {delivered}/{len(subscribers)} подписчикам Telegram")
+    return delivered
 
 
 async def start_bot_polling():
