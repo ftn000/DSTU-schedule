@@ -207,6 +207,14 @@ class Lesson {
       academicYear: json['учебныйГод'] as String?,
       theme: cleanTheme,
       color: rawColor,
+      isCancelled: json['isCancelled'] as bool? ?? false,
+      isRoomChanged: json['isRoomChanged'] as bool? ?? false,
+      isTeacherChanged: json['isTeacherChanged'] as bool? ?? false,
+      isTimeChanged: json['isTimeChanged'] as bool? ?? false,
+      isNew: json['isNew'] as bool? ?? false,
+      oldRoom: json['oldRoom'] as String?,
+      oldTeacher: json['oldTeacher'] as String?,
+      changeNote: json['changeNote'] as String?,
     );
   }
 
@@ -235,6 +243,8 @@ class Lesson {
       'isTeacherChanged': isTeacherChanged,
       'isTimeChanged': isTimeChanged,
       'isNew': isNew,
+      'oldRoom': oldRoom,
+      'oldTeacher': oldTeacher,
       'changeNote': changeNote,
     };
   }

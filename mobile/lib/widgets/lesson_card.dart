@@ -51,10 +51,6 @@ class LessonCard extends StatelessWidget {
     if (isCancelled) {
       cardBorderColor = Colors.redAccent.withValues(alpha: 0.4);
       cardBgColor = theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.3);
-    } else if (isNew) {
-      cardBorderColor = Colors.green.shade600;
-      cardBgColor = Colors.green.withValues(alpha: 0.06);
-      borderWidth = 1.5;
     } else if (isRoomChanged) {
       cardBorderColor = Colors.amber.shade600;
       cardBgColor = Colors.amber.withValues(alpha: 0.08);
@@ -67,15 +63,19 @@ class LessonCard extends StatelessWidget {
       cardBorderColor = Colors.teal.shade600;
       cardBgColor = Colors.teal.withValues(alpha: 0.06);
       borderWidth = 1.5;
+    } else if (isNew) {
+      cardBorderColor = Colors.green.shade600;
+      cardBgColor = Colors.green.withValues(alpha: 0.06);
+      borderWidth = 1.5;
     } else {
       cardBorderColor = theme.dividerColor.withValues(alpha: 0.2);
       cardBgColor = theme.colorScheme.surface;
     }
 
-    // Бейдж статуса
-    Widget? statusBadge;
+    // Бейджи статусов (поддержка комбинаций: смена ауд + замена препода)
+    final List<Widget> statusBadges = [];
     if (isCancelled) {
-      statusBadge = Container(
+      statusBadges.add(Container(
         padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
         decoration: BoxDecoration(
           color: Colors.redAccent.withValues(alpha: 0.15),
@@ -90,75 +90,80 @@ class LessonCard extends StatelessWidget {
             color: Colors.redAccent,
           ),
         ),
-      );
-    } else if (isNew) {
-      statusBadge = Container(
-        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
-        decoration: BoxDecoration(
-          color: Colors.green.withValues(alpha: 0.15),
-          borderRadius: BorderRadius.circular(6),
-          border: Border.all(color: Colors.green.shade600),
-        ),
-        child: Text(
-          '➕ ДОБАВЛЕНА',
-          style: TextStyle(
-            fontSize: 10,
-            fontWeight: FontWeight.bold,
-            color: Colors.green.shade800,
+      ));
+    } else {
+      if (isRoomChanged) {
+        statusBadges.add(Container(
+          padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+          decoration: BoxDecoration(
+            color: Colors.amber.withValues(alpha: 0.2),
+            borderRadius: BorderRadius.circular(6),
+            border: Border.all(color: Colors.amber.shade700),
           ),
-        ),
-      );
-    } else if (isRoomChanged) {
-      statusBadge = Container(
-        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
-        decoration: BoxDecoration(
-          color: Colors.amber.withValues(alpha: 0.2),
-          borderRadius: BorderRadius.circular(6),
-          border: Border.all(color: Colors.amber.shade700),
-        ),
-        child: Text(
-          '⚠️ СМЕНА АУД.',
-          style: TextStyle(
-            fontSize: 10,
-            fontWeight: FontWeight.bold,
-            color: Colors.amber.shade900,
+          child: Text(
+            '⚠️ СМЕНА АУД.',
+            style: TextStyle(
+              fontSize: 10,
+              fontWeight: FontWeight.bold,
+              color: Colors.amber.shade900,
+            ),
           ),
-        ),
-      );
-    } else if (isTeacherChanged) {
-      statusBadge = Container(
-        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
-        decoration: BoxDecoration(
-          color: Colors.purple.withValues(alpha: 0.15),
-          borderRadius: BorderRadius.circular(6),
-          border: Border.all(color: Colors.purple.shade600),
-        ),
-        child: Text(
-          '👤 ЗАМЕНА ПРЕПОД.',
-          style: TextStyle(
-            fontSize: 10,
-            fontWeight: FontWeight.bold,
-            color: Colors.purple.shade800,
+        ));
+      }
+      if (isTeacherChanged) {
+        statusBadges.add(Container(
+          padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+          decoration: BoxDecoration(
+            color: Colors.purple.withValues(alpha: 0.15),
+            borderRadius: BorderRadius.circular(6),
+            border: Border.all(color: Colors.purple.shade600),
           ),
-        ),
-      );
-    } else if (isTimeChanged) {
-      statusBadge = Container(
-        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
-        decoration: BoxDecoration(
-          color: Colors.teal.withValues(alpha: 0.15),
-          borderRadius: BorderRadius.circular(6),
-          border: Border.all(color: Colors.teal.shade600),
-        ),
-        child: Text(
-          '⏰ СМЕНА ВРЕМЕНИ',
-          style: TextStyle(
-            fontSize: 10,
-            fontWeight: FontWeight.bold,
-            color: Colors.teal.shade800,
+          child: Text(
+            '👤 ЗАМЕНА ПРЕПОД.',
+            style: TextStyle(
+              fontSize: 10,
+              fontWeight: FontWeight.bold,
+              color: Colors.purple.shade800,
+            ),
           ),
-        ),
-      );
+        ));
+      }
+      if (isTimeChanged) {
+        statusBadges.add(Container(
+          padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+          decoration: BoxDecoration(
+            color: Colors.teal.withValues(alpha: 0.15),
+            borderRadius: BorderRadius.circular(6),
+            border: Border.all(color: Colors.teal.shade600),
+          ),
+          child: Text(
+            '⏰ СМЕНА ВРЕМЕНИ',
+            style: TextStyle(
+              fontSize: 10,
+              fontWeight: FontWeight.bold,
+              color: Colors.teal.shade800,
+            ),
+          ),
+        ));
+      }
+      if (isNew && !isRoomChanged && !isTeacherChanged && !isTimeChanged) {
+        statusBadges.add(Container(
+          padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+          decoration: BoxDecoration(
+            color: Colors.green.withValues(alpha: 0.15),
+            borderRadius: BorderRadius.circular(6),
+            border: Border.all(color: Colors.green.shade600),
+          ),
+          child: Text(
+            '➕ ДОБАВЛЕНА',
+            style: TextStyle(
+              fontSize: 10,
+              fontWeight: FontWeight.bold,
+              color: Colors.green.shade800,
+            ),
+          ),
+        ));
+      }
     }
 
     final typeBadge = Container(
@@ -211,7 +216,7 @@ class LessonCard extends StatelessWidget {
               runSpacing: 4,
               children: [
                 typeBadge,
-                if (statusBadge != null) statusBadge,
+                ...statusBadges,
               ],
             ),
             const SizedBox(height: 6),
@@ -241,7 +246,9 @@ class LessonCard extends StatelessWidget {
                 const SizedBox(width: 3),
                 Expanded(
                   child: Text(
-                    lesson.room.isNotEmpty ? lesson.room : "Ауд. не указана",
+                    isRoomChanged && lesson.oldRoom != null && lesson.oldRoom!.isNotEmpty && lesson.oldRoom != lesson.room
+                        ? '${lesson.room.isNotEmpty ? lesson.room : "Ауд. не указана"} (была ${lesson.oldRoom})'
+                        : (lesson.room.isNotEmpty ? lesson.room : "Ауд. не указана"),
                     style: TextStyle(
                       fontSize: 11,
                       fontWeight: FontWeight.w600,
@@ -337,7 +344,11 @@ class LessonCard extends StatelessWidget {
                             ? Colors.amber.shade800 
                             : (isTeacherChanged 
                                 ? Colors.purple.shade800 
-                                : theme.colorScheme.primary)),
+                                : (isTimeChanged
+                                    ? Colors.teal.shade800
+                                    : (isNew
+                                        ? Colors.green.shade800
+                                        : theme.colorScheme.primary)))),
                   ),
                 ),
                 const SizedBox(height: 4),
@@ -382,7 +393,7 @@ class LessonCard extends StatelessWidget {
                   crossAxisAlignment: WrapCrossAlignment.center,
                   children: [
                     typeBadge,
-                    if (statusBadge != null) statusBadge,
+                    ...statusBadges,
 
                     // Бейдж аудитории
                     Container(
@@ -399,7 +410,9 @@ class LessonCard extends StatelessWidget {
                         ),
                       ),
                       child: Text(
-                        '📍 ${lesson.room.isNotEmpty ? lesson.room : "Ауд. не указана"}',
+                        isRoomChanged && lesson.oldRoom != null && lesson.oldRoom!.isNotEmpty && lesson.oldRoom != lesson.room
+                            ? '📍 ${lesson.room.isNotEmpty ? lesson.room : "Ауд. не указана"} (была ${lesson.oldRoom})'
+                            : '📍 ${lesson.room.isNotEmpty ? lesson.room : "Ауд. не указана"}',
                         style: TextStyle(
                           fontSize: 10,
                           fontWeight: FontWeight.w600,
@@ -472,9 +485,13 @@ class LessonCard extends StatelessWidget {
                         fontWeight: FontWeight.w500,
                         color: isCancelled 
                             ? Colors.redAccent 
-                            : (isTeacherChanged 
-                                ? Colors.purple.shade800 
-                                : Colors.amber.shade800),
+                            : (isRoomChanged
+                                ? Colors.amber.shade800
+                                : (isTeacherChanged 
+                                    ? Colors.purple.shade800 
+                                    : (isTimeChanged
+                                        ? Colors.teal.shade800
+                                        : Colors.green.shade800))),
                       ),
                     ),
                   ),

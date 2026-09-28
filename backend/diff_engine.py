@@ -225,7 +225,14 @@ def compare_schedules(
             subj = _clean_str(n.get("дисциплина"))
 
             if o_room != n_room:
-                detail_parts = [f"Аудитория изменена с '{old_aud}' на '{new_aud}'"]
+                is_old_placeholder = old_aud.strip().lower() in ("аудитория", "", "не указана", "none")
+                if is_old_placeholder:
+                    detail_parts = [f"Аудитория назначена: '{new_aud}'"]
+                    msg = f"{date_fmt}, {n_num}-я пара ({subj}): назначена аудитория {new_aud}"
+                else:
+                    detail_parts = [f"Аудитория изменена с '{old_aud}' на '{new_aud}'"]
+                    msg = f"{date_fmt}, {n_num}-я пара ({subj}): смена аудитории: {old_aud} -> {new_aud}"
+
                 if o_teach != n_teach and new_teach_name:
                     detail_parts.append(f"преподаватель: '{new_teach_name}'")
                 changes.append(ChangeItem(
@@ -236,7 +243,7 @@ def compare_schedules(
                     lesson_num=n_num,
                     subject=subj,
                     details="; ".join(detail_parts),
-                    human_message=f"{date_fmt}, {n_num}-я пара ({subj}): смена аудитории: {old_aud} -> {new_aud}",
+                    human_message=msg,
                     old_lesson=o,
                     new_lesson=n
                 ))
@@ -306,7 +313,14 @@ def compare_schedules(
             subj = _clean_str(n.get("дисциплина"))
 
             if o_room != n_room:
-                detail_parts = [f"Аудитория изменена с '{old_aud}' на '{new_aud}'"]
+                is_old_placeholder = old_aud.strip().lower() in ("аудитория", "", "не указана", "none")
+                if is_old_placeholder:
+                    detail_parts = [f"Аудитория назначена: '{new_aud}'"]
+                    msg = f"{date_fmt}, {n_num}-я пара ({subj}): назначена аудитория {new_aud}"
+                else:
+                    detail_parts = [f"Аудитория изменена с '{old_aud}' на '{new_aud}'"]
+                    msg = f"{date_fmt}, {n_num}-я пара ({subj}): смена аудитории: {old_aud} -> {new_aud}"
+
                 if o_teach != n_teach and new_teach_name:
                     detail_parts.append(f"преподаватель: '{new_teach_name}'")
                 changes.append(ChangeItem(
@@ -317,7 +331,7 @@ def compare_schedules(
                     lesson_num=n_num,
                     subject=subj,
                     details="; ".join(detail_parts),
-                    human_message=f"{date_fmt}, {n_num}-я пара ({subj}): смена аудитории: {old_aud} -> {new_aud}",
+                    human_message=msg,
                     old_lesson=o,
                     new_lesson=n
                 ))

@@ -1411,9 +1411,6 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
     if (isCancelled) {
       accentColor = Colors.redAccent;
       cardBgColor = Colors.redAccent.withValues(alpha: 0.06);
-    } else if (isNew) {
-      accentColor = Colors.green.shade600;
-      cardBgColor = Colors.green.withValues(alpha: 0.06);
     } else if (isRoomChanged) {
       accentColor = Colors.amber.shade700;
       cardBgColor = Colors.amber.withValues(alpha: 0.08);
@@ -1423,6 +1420,9 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
     } else if (isTimeChanged) {
       accentColor = Colors.teal.shade600;
       cardBgColor = Colors.teal.withValues(alpha: 0.06);
+    } else if (isNew) {
+      accentColor = Colors.green.shade600;
+      cardBgColor = Colors.green.withValues(alpha: 0.06);
     } else {
       accentColor = typeColor;
       cardBgColor = theme.colorScheme.surface;
@@ -1485,14 +1485,16 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                     ),
                     if (isCancelled)
                       const Text('🚫', style: TextStyle(fontSize: 10))
-                    else if (isNew)
-                      const Text('➕', style: TextStyle(fontSize: 10))
-                    else if (isRoomChanged)
-                      const Text('📍', style: TextStyle(fontSize: 10))
-                    else if (isTeacherChanged)
-                      const Text('👤', style: TextStyle(fontSize: 10))
-                    else if (isTimeChanged)
-                      const Text('⏰', style: TextStyle(fontSize: 10)),
+                    else ...[
+                      if (isRoomChanged)
+                        const Text('📍', style: TextStyle(fontSize: 10)),
+                      if (isTeacherChanged)
+                        const Text('👤', style: TextStyle(fontSize: 10)),
+                      if (isTimeChanged)
+                        const Text('⏰', style: TextStyle(fontSize: 10)),
+                      if (isNew && !isRoomChanged && !isTeacherChanged && !isTimeChanged)
+                        const Text('➕', style: TextStyle(fontSize: 10)),
+                    ],
                   ],
                 ),
                 const SizedBox(height: 4),
@@ -1527,7 +1529,9 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                     const SizedBox(width: 2),
                     Expanded(
                       child: Text(
-                        lesson.room.isNotEmpty ? lesson.room : 'Ауд. не указана',
+                        isRoomChanged && lesson.oldRoom != null && lesson.oldRoom!.isNotEmpty && lesson.oldRoom != lesson.room
+                            ? '${lesson.room.isNotEmpty ? lesson.room : "Ауд. не указана"} (была ${lesson.oldRoom})'
+                            : (lesson.room.isNotEmpty ? lesson.room : 'Ауд. не указана'),
                         style: TextStyle(
                           fontSize: 10,
                           fontWeight: FontWeight.w500,

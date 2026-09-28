@@ -26,7 +26,7 @@ class ApiService {
 
   static const String baseUrl = String.fromEnvironment(
     'API_URL',
-    defaultValue: 'http://127.0.0.1:8000',
+    defaultValue: 'http://109.69.17.170',
   );
 
   static const String _savedIdKey = 'saved_student_id';
@@ -241,18 +241,30 @@ class ApiService {
 
     final cancelledLessonIds = <int>{};
     final roomChangesById = <int, String>{};
+    final roomOldAudById = <int, String>{};
     final teacherChangesById = <int, String>{};
+    final teacherOldNameById = <int, String>{};
     final timeChangesById = <int, String>{};
     final addedLessonIds = <int>{};
 
     for (final ch in recentChanges) {
       final changeType = (ch['change_type'] as String? ?? ch['type'] as String? ?? '').toUpperCase();
-      final lessonId = ch['lesson_id'] as int?;
+      final lessonId = ch['lesson_id'] != null ? int.tryParse(ch['lesson_id'].toString()) : null;
       final details = ch['details'] as String? ?? ch['human_message'] as String? ?? '';
       final detectedAtStr = ch['detected_at'] as String?;
       DateTime? detectedAt;
       if (detectedAtStr != null && detectedAtStr.isNotEmpty) {
         detectedAt = DateTime.tryParse(detectedAtStr);
+      }
+
+      dynamic rawData = ch['lesson_data'] ?? ch['old_lesson'];
+      Map<String, dynamic>? oldLessonMap;
+      if (rawData is Map<String, dynamic>) {
+        oldLessonMap = rawData;
+      } else if (rawData is String && rawData.isNotEmpty) {
+        try {
+          oldLessonMap = json.decode(rawData) as Map<String, dynamic>?;
+        } catch (_) {}
       }
 
       // Кулдаун 24 часа для отображения карточки как "Добавлена пара"
@@ -276,13 +288,21 @@ class ApiService {
             cancelledLessonIds.add(lessonId);
             break;
           case 'ROOM_CHANGED':
-            roomChangesById[lessonId] = details.isNotEmpty ? details : 'Аудитория изменена';
+            roomChangesById.putIfAbsent(lessonId, () => details.isNotEmpty ? details : 'Аудитория изменена');
+            final oldAud = oldLessonMap?['аудитория'] as String?;
+            if (oldAud != null && oldAud.trim().isNotEmpty && oldAud.trim().toLowerCase() != 'аудитория') {
+              roomOldAudById.putIfAbsent(lessonId, () => oldAud.trim());
+            }
             break;
           case 'TEACHER_CHANGED':
-            teacherChangesById[lessonId] = details.isNotEmpty ? details : 'Преподаватель изменен';
+            teacherChangesById.putIfAbsent(lessonId, () => details.isNotEmpty ? details : 'Преподаватель изменен');
+            final oldTeach = (oldLessonMap?['преподаватель'] ?? oldLessonMap?['фиоПреподавателя']) as String?;
+            if (oldTeach != null && oldTeach.trim().isNotEmpty) {
+              teacherOldNameById.putIfAbsent(lessonId, () => oldTeach.trim());
+            }
             break;
           case 'TIME_CHANGED':
-            timeChangesById[lessonId] = details.isNotEmpty ? details : 'Время изменено';
+            timeChangesById.putIfAbsent(lessonId, () => details.isNotEmpty ? details : 'Время изменено');
             break;
           case 'ADDED':
           case 'NEW':
@@ -304,7 +324,7 @@ class ApiService {
     for (final ch in recentChanges) {
       final changeType = (ch['change_type'] as String? ?? ch['type'] as String? ?? '').toUpperCase();
       if (changeType == 'CANCELLED') {
-        final lessonId = ch['lesson_id'] as int?;
+        final lessonId = ch['lesson_id'] != null ? int.tryParse(ch['lesson_id'].toString()) : null;
         dynamic rawData = ch['lesson_data'] ?? ch['old_lesson'];
         Map<String, dynamic>? lessonMap;
         if (rawData is Map<String, dynamic>) {
@@ -350,16 +370,26 @@ class ApiService {
       if (roomChangesById.containsKey(lesson.id)) {
         lesson.isRoomChanged = true;
         lesson.changeNote = roomChangesById[lesson.id];
+        if (roomOldAudById.containsKey(lesson.id)) {
+          lesson.oldRoom = roomOldAudById[lesson.id];
+        }
       }
       if (teacherChangesById.containsKey(lesson.id)) {
         lesson.isTeacherChanged = true;
         lesson.changeNote = teacherChangesById[lesson.id];
+        if (teacherOldNameById.containsKey(lesson.id)) {
+          lesson.oldTeacher = teacherOldNameById[lesson.id];
+        }
       }
       if (timeChangesById.containsKey(lesson.id)) {
         lesson.isTimeChanged = true;
         lesson.changeNote = timeChangesById[lesson.id];
       }
-      if (addedLessonIds.contains(lesson.id)) {
+      // Помечаем пару как новую ТОЛЬКО если у неё нет специфических модификаторов (смены ауд./препода/времени)
+      if (addedLessonIds.contains(lesson.id) &&
+          !lesson.isRoomChanged &&
+          !lesson.isTeacherChanged &&
+          !lesson.isTimeChanged) {
         lesson.isNew = true;
       }
     }
@@ -368,7 +398,7 @@ class ApiService {
     for (final ch in recentChanges) {
       final changeType = (ch['change_type'] as String? ?? ch['type'] as String? ?? '').toUpperCase();
       final chDate = (ch['lesson_date'] as String? ?? ch['date'] as String? ?? '').split('T')[0];
-      final chNum = ch['lesson_num'] as int? ?? 0;
+      final chNum = ch['lesson_num'] != null ? int.tryParse(ch['lesson_num'].toString()) ?? 0 : 0;
       final chSubj = normSubj(ch['subject'] as String? ?? '');
       final details = ch['details'] as String? ?? ch['human_message'] as String? ?? '';
       final detectedAtStr = ch['detected_at'] as String?;
@@ -391,19 +421,42 @@ class ApiService {
 
       if (chDate.isEmpty || chNum == 0 || chSubj.isEmpty) continue;
 
+      dynamic rawData = ch['lesson_data'] ?? ch['old_lesson'];
+      Map<String, dynamic>? oldLessonMap;
+      if (rawData is Map<String, dynamic>) {
+        oldLessonMap = rawData;
+      } else if (rawData is String && rawData.isNotEmpty) {
+        try {
+          oldLessonMap = json.decode(rawData) as Map<String, dynamic>?;
+        } catch (_) {}
+      }
+
       for (final lesson in lessons) {
         if (lesson.isCancelled) continue;
         if (lesson.rawDate.startsWith(chDate) && lesson.lessonNum == chNum && normSubj(lesson.subject) == chSubj) {
-          if (changeType == 'ROOM_CHANGED' && !lesson.isRoomChanged) {
+          if (changeType == 'ROOM_CHANGED') {
             lesson.isRoomChanged = true;
             lesson.changeNote = details.isNotEmpty ? details : 'Аудитория изменена';
-          } else if (changeType == 'TEACHER_CHANGED' && !lesson.isTeacherChanged) {
+            final oldAud = oldLessonMap?['аудитория'] as String?;
+            if (oldAud != null && oldAud.trim().isNotEmpty && oldAud.trim().toLowerCase() != 'аудитория') {
+              lesson.oldRoom = oldAud.trim();
+            }
+          } else if (changeType == 'TEACHER_CHANGED') {
             lesson.isTeacherChanged = true;
             lesson.changeNote = details.isNotEmpty ? details : 'Преподаватель изменен';
-          } else if (changeType == 'TIME_CHANGED' && !lesson.isTimeChanged) {
+            final oldTeach = (oldLessonMap?['преподаватель'] ?? oldLessonMap?['фиоПреподавателя']) as String?;
+            if (oldTeach != null && oldTeach.trim().isNotEmpty) {
+              lesson.oldTeacher = oldTeach.trim();
+            }
+          } else if (changeType == 'TIME_CHANGED') {
             lesson.isTimeChanged = true;
             lesson.changeNote = details.isNotEmpty ? details : 'Время изменено';
-          } else if ((changeType == 'ADDED' || changeType == 'NEW') && !lesson.isNew && isRecentAdd) {
+          } else if ((changeType == 'ADDED' || changeType == 'NEW') &&
+              !lesson.isNew &&
+              !lesson.isRoomChanged &&
+              !lesson.isTeacherChanged &&
+              !lesson.isTimeChanged &&
+              isRecentAdd) {
             lesson.isNew = true;
           }
         }
