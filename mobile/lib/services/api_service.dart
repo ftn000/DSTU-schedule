@@ -240,6 +240,8 @@ class ApiService {
     }
 
     final cancelledLessonIds = <int>{};
+    final expiredCancelledLessonIds = <int>{};
+    final expiredCancelledSignatures = <String>{};
     final roomChangesById = <int, String>{};
     final roomOldAudById = <int, String>{};
     final teacherChangesById = <int, String>{};
@@ -247,15 +249,32 @@ class ApiService {
     final timeChangesById = <int, String>{};
     final addedLessonIds = <int>{};
 
+    // Проверка 24-часового кулдауна для всех типов изменений:
+    // - Добавленные пары имеют статус «Добавлена» 24 часа, затем становятся обычными
+    // - Смена аудитории/преподавателя/времени отображается 24 часа, затем пара становится обычной с новыми данными
+    // - Отмененная пара отображается красной 24 часа, а спустя сутки полностью удаляется из списка расписания
+    bool isChangeWithin24h(Map<String, dynamic> ch) {
+      final detectedAtStr = ch['detected_at'] as String?;
+      if (detectedAtStr != null && detectedAtStr.isNotEmpty) {
+        final detectedAt = DateTime.tryParse(detectedAtStr);
+        if (detectedAt != null) {
+          final diff = now.toUtc().difference(detectedAt.toUtc());
+          return diff.inHours < 24 && diff.inHours > -2;
+        }
+      }
+      final lDate = (ch['lesson_date'] as String? ?? ch['date'] as String? ?? '').split('T')[0];
+      final dt = DateTime.tryParse(lDate);
+      if (dt != null) {
+        return now.difference(dt).inHours < 24;
+      }
+      return true;
+    }
+
     for (final ch in recentChanges) {
       final changeType = (ch['change_type'] as String? ?? ch['type'] as String? ?? '').toUpperCase();
       final lessonId = ch['lesson_id'] != null ? int.tryParse(ch['lesson_id'].toString()) : null;
       final details = ch['details'] as String? ?? ch['human_message'] as String? ?? '';
-      final detectedAtStr = ch['detected_at'] as String?;
-      DateTime? detectedAt;
-      if (detectedAtStr != null && detectedAtStr.isNotEmpty) {
-        detectedAt = DateTime.tryParse(detectedAtStr);
-      }
+      final isRecent = isChangeWithin24h(ch);
 
       dynamic rawData = ch['lesson_data'] ?? ch['old_lesson'];
       Map<String, dynamic>? oldLessonMap;
@@ -267,49 +286,54 @@ class ApiService {
         } catch (_) {}
       }
 
-      // Кулдаун 24 часа для отображения карточки как "Добавлена пара"
-      bool isRecentAdd = true;
-      if (detectedAt != null) {
-        final age = now.difference(detectedAt);
-        if (age.inHours >= 24 || age.isNegative) {
-          isRecentAdd = false;
-        }
-      } else {
-        final lDate = (ch['lesson_date'] as String? ?? ch['date'] as String? ?? '').split('T')[0];
-        final dt = DateTime.tryParse(lDate);
-        if (dt != null && now.difference(dt).inHours >= 24) {
-          isRecentAdd = false;
-        }
-      }
-
       if (lessonId != null) {
         switch (changeType) {
           case 'CANCELLED':
-            cancelledLessonIds.add(lessonId);
+            if (isRecent) {
+              cancelledLessonIds.add(lessonId);
+            } else {
+              expiredCancelledLessonIds.add(lessonId);
+            }
             break;
           case 'ROOM_CHANGED':
-            roomChangesById.putIfAbsent(lessonId, () => details.isNotEmpty ? details : 'Аудитория изменена');
-            final oldAud = oldLessonMap?['аудитория'] as String?;
-            if (oldAud != null && oldAud.trim().isNotEmpty && oldAud.trim().toLowerCase() != 'аудитория') {
-              roomOldAudById.putIfAbsent(lessonId, () => oldAud.trim());
+            if (isRecent) {
+              roomChangesById.putIfAbsent(lessonId, () => details.isNotEmpty ? details : 'Аудитория изменена');
+              final oldAud = oldLessonMap?['аудитория'] as String?;
+              if (oldAud != null && oldAud.trim().isNotEmpty && oldAud.trim().toLowerCase() != 'аудитория') {
+                roomOldAudById.putIfAbsent(lessonId, () => oldAud.trim());
+              }
             }
             break;
           case 'TEACHER_CHANGED':
-            teacherChangesById.putIfAbsent(lessonId, () => details.isNotEmpty ? details : 'Преподаватель изменен');
-            final oldTeach = (oldLessonMap?['преподаватель'] ?? oldLessonMap?['фиоПреподавателя']) as String?;
-            if (oldTeach != null && oldTeach.trim().isNotEmpty) {
-              teacherOldNameById.putIfAbsent(lessonId, () => oldTeach.trim());
+            if (isRecent) {
+              teacherChangesById.putIfAbsent(lessonId, () => details.isNotEmpty ? details : 'Преподаватель изменен');
+              final oldTeach = (oldLessonMap?['преподаватель'] ?? oldLessonMap?['фиоПреподавателя']) as String?;
+              if (oldTeach != null && oldTeach.trim().isNotEmpty) {
+                teacherOldNameById.putIfAbsent(lessonId, () => oldTeach.trim());
+              }
             }
             break;
           case 'TIME_CHANGED':
-            timeChangesById.putIfAbsent(lessonId, () => details.isNotEmpty ? details : 'Время изменено');
+            if (isRecent) {
+              timeChangesById.putIfAbsent(lessonId, () => details.isNotEmpty ? details : 'Время изменено');
+            }
             break;
           case 'ADDED':
           case 'NEW':
-            if (isRecentAdd) {
+            if (isRecent) {
               addedLessonIds.add(lessonId);
             }
             break;
+        }
+      }
+
+      // Сигнатура для отмененных пар старше 24ч (чтобы гарантированно убрать из расписания)
+      if (changeType == 'CANCELLED' && !isRecent) {
+        final chDate = (ch['lesson_date'] as String? ?? ch['date'] as String? ?? '').split('T')[0];
+        final chNum = ch['lesson_num'] != null ? int.tryParse(ch['lesson_num'].toString()) ?? 0 : 0;
+        final chSubj = normSubj(ch['subject'] as String? ?? '');
+        if (chDate.isNotEmpty && chNum > 0 && chSubj.isNotEmpty) {
+          expiredCancelledSignatures.add('${chDate}_${chNum}_$chSubj');
         }
       }
     }
@@ -320,10 +344,23 @@ class ApiService {
         .where((lesson) => !lesson.isMilitaryTraining)
         .toList();
 
-    // Добавляем отмененные пары, которых уже нет в основном расписании ДГТУ
+    // Удаляем пары, отмененные более 24 часов назад
+    lessons.removeWhere((l) {
+      if (expiredCancelledLessonIds.contains(l.id)) return true;
+      final dateKey = l.rawDate.split('T')[0];
+      final sig = '${dateKey}_${l.lessonNum}_${normSubj(l.subject)}';
+      return expiredCancelledSignatures.contains(sig);
+    });
+
+    // Добавляем отмененные пары, которых уже нет в основном расписании ДГТУ.
+    // Спустя 24 часа после отмены пара просто удаляется из списка (не добавляется).
     for (final ch in recentChanges) {
       final changeType = (ch['change_type'] as String? ?? ch['type'] as String? ?? '').toUpperCase();
       if (changeType == 'CANCELLED') {
+        if (!isChangeWithin24h(ch)) {
+          continue; // Истек 24ч кулдаун: пара удаляется из списка
+        }
+
         final lessonId = ch['lesson_id'] != null ? int.tryParse(ch['lesson_id'].toString()) : null;
         dynamic rawData = ch['lesson_data'] ?? ch['old_lesson'];
         Map<String, dynamic>? lessonMap;
@@ -396,28 +433,13 @@ class ApiService {
 
     // Если пара не сопоставилась по ID (в ДГТУ сменился 'код'), сопоставляем по реквизитам
     for (final ch in recentChanges) {
+      if (!isChangeWithin24h(ch)) continue; // Старше 24 часов — не маркируем изменения
+
       final changeType = (ch['change_type'] as String? ?? ch['type'] as String? ?? '').toUpperCase();
       final chDate = (ch['lesson_date'] as String? ?? ch['date'] as String? ?? '').split('T')[0];
       final chNum = ch['lesson_num'] != null ? int.tryParse(ch['lesson_num'].toString()) ?? 0 : 0;
       final chSubj = normSubj(ch['subject'] as String? ?? '');
       final details = ch['details'] as String? ?? ch['human_message'] as String? ?? '';
-      final detectedAtStr = ch['detected_at'] as String?;
-      DateTime? detectedAt;
-      if (detectedAtStr != null && detectedAtStr.isNotEmpty) {
-        detectedAt = DateTime.tryParse(detectedAtStr);
-      }
-      bool isRecentAdd = true;
-      if (detectedAt != null) {
-        final age = now.difference(detectedAt);
-        if (age.inHours >= 24 || age.isNegative) {
-          isRecentAdd = false;
-        }
-      } else {
-        final dt = DateTime.tryParse(chDate);
-        if (dt != null && now.difference(dt).inHours >= 24) {
-          isRecentAdd = false;
-        }
-      }
 
       if (chDate.isEmpty || chNum == 0 || chSubj.isEmpty) continue;
 
@@ -455,8 +477,7 @@ class ApiService {
               !lesson.isNew &&
               !lesson.isRoomChanged &&
               !lesson.isTeacherChanged &&
-              !lesson.isTimeChanged &&
-              isRecentAdd) {
+              !lesson.isTimeChanged) {
             lesson.isNew = true;
           }
         }

@@ -162,7 +162,7 @@ class Database:
         if not changes:
             return
 
-        now = datetime.now().isoformat()
+        now = datetime.now().astimezone().isoformat()
         records = [
             (
                 target_id,
