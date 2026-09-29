@@ -6,7 +6,7 @@
 import sqlite3
 import json
 import hashlib
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional, List, Dict, Any
 
 
@@ -625,28 +625,60 @@ class Database:
     def sync_tasks_from_schedule(self, group_name: str, lessons: List[Dict[str, Any]]) -> int:
         """
         Автоматически генерирует задания для практик и лабораторных из расписания группы.
-        Не создает дубликаты.
+        Не создает дубликаты. Поддерживает как DTO от мобильного приложения, так и сырые словари ДГТУ.
         """
         created_count = 0
-        now = datetime.now().isoformat()
+        now = datetime.now()
+        now_iso = now.isoformat()
+        # Ограничиваемся текущим семестром (например, последние 90 дней)
+        min_date = (now - timedelta(days=90)).strftime("%Y-%m-%d")
+
         with self._get_connection() as conn:
             cursor = conn.cursor()
             for l in lessons:
-                l_type = l.get("lessonType") or l.get("тип") or ""
                 subject = l.get("subject") or l.get("дисциплина") or ""
+                if not subject:
+                    continue
+
                 theme = (l.get("theme") or l.get("тема") or "").strip()
                 date_str = l.get("date") or l.get("дата") or ""
                 if "T" in date_str:
                     date_str = date_str.split("T")[0]
-                num = l.get("num") or l.get("пара") or None
+
+                # Фильтруем старые архивные занятия прошлых семестров
+                if date_str and date_str < min_date:
+                    continue
+
+                num = l.get("num") or l.get("пара") or l.get("номер_занятия")
                 if num:
                     try:
                         num = int(num)
                     except (ValueError, TypeError):
                         num = None
 
+                l_type = l.get("lessonType") or l.get("тип") or ""
+                if not l_type:
+                    s_low = subject.lower()
+                    t_low = theme.lower()
+                    color = (l.get("цвет") or l.get("color") or "").strip().lower()
+
+                    # Теоретические лекции отсекаем
+                    if any(k in t_low for k in ("лекция", "лекц.", "лек.", "введение", "основы", "теория", "история", "архитектура")):
+                        continue
+
+                    if any(p in s_low for p in ("(пр)", " пр.", "практик")) or any(p in t_low for p in ("практик", "кейс", "воркшоп", "моделирование", "расчет", "разработка")):
+                        l_type = "Практика"
+                    elif any(p in s_low for p in ("(лаб)", " лаб.", "лаборатор")) or "лаборатор" in t_low or color == "#004c3e":
+                        l_type = "Лабораторная"
+                    elif color in ("#5c6bc0", "#2196f3", "#009688", "#ff9800", "#ab47bc", "#fdd017", "#44c8c8"):
+                        l_type = "Практика"
+                    elif "семинар" in t_low:
+                        l_type = "Семинар"
+                    elif "проект" in s_low or "проект" in t_low:
+                        l_type = "Проект"
+
                 is_practice = any(p in l_type.lower() for p in ("практик", "лаборатор", "семинар", "проект"))
-                if not is_practice or not subject:
+                if not is_practice:
                     continue
 
                 if theme:
@@ -656,21 +688,12 @@ class Database:
                 else:
                     title = f"{l_type}: {subject}"
 
-                if theme:
-                    cursor.execute("""
-                        SELECT id FROM tasks 
-                        WHERE LOWER(TRIM(group_name)) = LOWER(TRIM(?)) 
-                          AND LOWER(TRIM(subject)) = LOWER(TRIM(?))
-                          AND (lesson_date = ? OR title = ?)
-                    """, (group_name, subject, date_str, title))
-                else:
-                    cursor.execute("""
-                        SELECT id FROM tasks 
-                        WHERE LOWER(TRIM(group_name)) = LOWER(TRIM(?)) 
-                          AND LOWER(TRIM(subject)) = LOWER(TRIM(?))
-                          AND lesson_date = ?
-                          AND (lesson_num = ? OR title = ?)
-                    """, (group_name, subject, date_str, num, title))
+                cursor.execute("""
+                    SELECT id FROM tasks 
+                    WHERE LOWER(TRIM(group_name)) = LOWER(TRIM(?)) 
+                      AND LOWER(TRIM(subject)) = LOWER(TRIM(?))
+                      AND (lesson_date = ? OR title = ?)
+                """, (group_name, subject, date_str, title))
 
                 exists = cursor.fetchone()
                 if not exists:
@@ -685,8 +708,8 @@ class Database:
                         num,
                         date_str,
                         f"Создано автоматически из расписания на {date_str} (пара {num or '-'}).",
-                        now,
-                        now
+                        now_iso,
+                        now_iso
                     ))
                     created_count += 1
 
