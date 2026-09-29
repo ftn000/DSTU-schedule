@@ -49,6 +49,7 @@ backend/uploads/
 .pub-cache/
 .pub/
 *.apk
+*.zip
 *.patch
 
 # OS generated files

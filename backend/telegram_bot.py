@@ -52,6 +52,10 @@ APK_DOWNLOAD_URL = os.getenv(
     "APK_DOWNLOAD_URL",
     APP_REDIRECT_URL.replace("/app", "/download/DSTU-schedule.apk"),
 )
+WINDOWS_DOWNLOAD_URL = os.getenv(
+    "WINDOWS_DOWNLOAD_URL",
+    APP_REDIRECT_URL.replace("/app", "/download/DSTU-schedule-windows.zip"),
+)
 
 bot = Bot(token=BOT_TOKEN) if BOT_TOKEN else None
 dp = Dispatcher()
@@ -70,17 +74,19 @@ def get_main_keyboard() -> ReplyKeyboardMarkup:
         keyboard=[
             [KeyboardButton(text="📅 Сегодня"), KeyboardButton(text="📆 Завтра")],
             [KeyboardButton(text="🗓 Текущая неделя"), KeyboardButton(text="🗓 Следующая неделя")],
-            [KeyboardButton(text="📝 Задания и практики"), KeyboardButton(text="ℹ️ Информация")],
+            [KeyboardButton(text="📝 Задания и практики"), KeyboardButton(text="⏰ Дедлайны")],
+            [KeyboardButton(text="ℹ️ Информация")],
         ],
         resize_keyboard=True,
     )
 
 
 def get_apk_download_keyboard() -> InlineKeyboardMarkup:
-    """Inline-кнопка для прямого скачивания APK-файла приложения."""
+    """Inline-кнопка для прямого скачивания APK и Windows версии."""
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="📥 Скачать приложение (.APK)", url=APK_DOWNLOAD_URL)]
+            [InlineKeyboardButton(text="📱 Скачать для Android (.APK)", url=APK_DOWNLOAD_URL)],
+            [InlineKeyboardButton(text="💻 Скачать для Windows (.ZIP)", url=WINDOWS_DOWNLOAD_URL)],
         ]
     )
 
@@ -955,7 +961,10 @@ async def handle_tasks_list(message: types.Message):
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📲 Открыть в приложении", url=f"{APP_REDIRECT_URL}?student_id={student_id}")],
-        [InlineKeyboardButton(text="🔄 Синхронизировать практики", callback_data="sync_tasks")],
+        [
+            InlineKeyboardButton(text="⏰ Горящие дедлайны", callback_data="view_deadlines"),
+            InlineKeyboardButton(text="🔄 Синхронизировать", callback_data="sync_tasks"),
+        ],
     ])
 
     body_text = "\n".join(lines[:2]) + "\n" + "\n\n".join(lines[2:])
@@ -965,6 +974,181 @@ async def handle_tasks_list(message: types.Message):
         reply_markup=keyboard,
         disable_web_page_preview=True,
     )
+
+
+def _parse_task_deadline(dl_str: Optional[str]) -> Optional[datetime]:
+    """Парсит строку даты дедлайна в объект datetime."""
+    if not dl_str or not dl_str.strip():
+        return None
+    s = dl_str.strip()
+    for fmt in ("%Y-%m-%d", "%d.%m.%Y", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S"):
+        try:
+            return datetime.strptime(s[:19], fmt)
+        except ValueError:
+            pass
+    return None
+
+
+def _build_deadlines_content(
+    student_id: str,
+    group_name: str,
+    tasks: List[Dict[str, Any]]
+) -> tuple[str, InlineKeyboardMarkup, bool]:
+    """
+    Формирует текст и клавиатуру с группировкой практических заданий по срочности дедлайнов.
+    Возвращает (text, keyboard, has_urgent_deadlines).
+    """
+    now = datetime.now()
+    today_date = now.date()
+
+    active_tasks = [
+        t for t in tasks
+        if (t.get("submission", {}).get("status") or "todo") in ("todo", "in_progress")
+    ]
+
+    if not active_tasks:
+        text = (
+            f"🎉 <b>Отличная работа ({group_name})!</b>\n\n"
+            f"У вас нет активных или просроченных заданий. Все практики сданы или зачтены! 👍"
+        )
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📲 Открыть в приложении", url=f"{APP_REDIRECT_URL}?student_id={student_id}")],
+            [InlineKeyboardButton(text="🔄 Синхронизировать практики", callback_data="sync_tasks")],
+        ])
+        return text, keyboard, False
+
+    overdue = []
+    due_today = []
+    due_tomorrow = []
+    due_soon = []       # 2-3 дня
+    upcoming = []       # > 3 дней
+    no_deadline = []
+
+    for t in active_tasks:
+        dl_dt = _parse_task_deadline(t.get("deadline"))
+        if not dl_dt:
+            no_deadline.append(t)
+            continue
+        dl_date = dl_dt.date()
+        diff = (dl_date - today_date).days
+        if diff < 0:
+            overdue.append((t, abs(diff)))
+        elif diff == 0:
+            due_today.append(t)
+        elif diff == 1:
+            due_tomorrow.append(t)
+        elif 1 < diff <= 3:
+            due_soon.append((t, diff))
+        else:
+            upcoming.append((t, diff))
+
+    has_urgent = bool(overdue or due_today or due_tomorrow or due_soon)
+
+    lines = [
+        f"⏰ <b>КОНТРОЛЬ ДЕДЛАЙНОВ И ПРАКТИК</b>",
+        f"Группа: <b>{group_name}</b> | Не сдано: <b>{len(active_tasks)}</b>\n"
+    ]
+
+    if overdue:
+        lines.append("🚨 <b>ПРОСРОЧЕНО:</b>")
+        for t, days in overdue[:5]:
+            lines.append(f"• <b>{t['subject']}</b> — {t['title']} (просрочено на {days} дн., был <i>{t['deadline']}</i>)")
+        if len(overdue) > 5:
+            lines.append(f"<i>...и еще {len(overdue) - 5} просроченных</i>")
+        lines.append("")
+
+    if due_today:
+        lines.append("🔥 <b>СДАЧА СЕГОДНЯ:</b>")
+        for t in due_today[:5]:
+            lines.append(f"• <b>{t['subject']}</b> — {t['title']} ⚠️")
+        lines.append("")
+
+    if due_tomorrow:
+        lines.append("⏳ <b>СДАЧА ЗАВТРА:</b>")
+        for t in due_tomorrow[:5]:
+            lines.append(f"• <b>{t['subject']}</b> — {t['title']}")
+        lines.append("")
+
+    if due_soon:
+        lines.append("📅 <b>В ближайшие 2–3 дня:</b>")
+        for t, days in due_soon[:5]:
+            lines.append(f"• <b>{t['subject']}</b> — {t['title']} (осталось {days} дн., до <i>{t['deadline']}</i>)")
+        lines.append("")
+
+    if upcoming and not (overdue or due_today or due_tomorrow):
+        lines.append("🗓 <b>Предстоящие дедлайны:</b>")
+        for t, days in upcoming[:5]:
+            lines.append(f"• <b>{t['subject']}</b> — {t['title']} (через {days} дн., <i>{t['deadline']}</i>)")
+        lines.append("")
+
+    if no_deadline and not (overdue or due_today or due_tomorrow or due_soon):
+        lines.append("⚪️ <b>Практики в работе (без даты дедлайна):</b>")
+        for t in no_deadline[:5]:
+            lines.append(f"• <b>{t['subject']}</b> — {t['title']}")
+        if len(no_deadline) > 5:
+            lines.append(f"<i>...и еще {len(no_deadline) - 5} заданий</i>")
+        lines.append("")
+
+    lines.append("💡 <i>Прикрепляйте решения (код, PDF, архивы) заблаговременно через приложение!</i>")
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📲 Открыть в приложении", url=f"{APP_REDIRECT_URL}?student_id={student_id}")],
+        [
+            InlineKeyboardButton(text="📝 Все задания", callback_data="view_tasks"),
+            InlineKeyboardButton(text="🔄 Синхронизировать", callback_data="sync_tasks"),
+        ],
+    ])
+
+    return "\n".join(lines).strip(), keyboard, has_urgent
+
+
+@dp.message(F.text.in_(["⏰ Дедлайны", "Дедлайны", "/deadlines", "/remind", "/alerts"]))
+async def handle_deadlines_command(message: types.Message):
+    if _db is None:
+        return
+    sub = _db.get_telegram_subscriber(message.chat.id)
+    if not sub or not sub.get("is_active"):
+        await message.answer(
+            "ℹ️ Для просмотра дедлайнов сначала отправьте свой ID студента (например, <code>347338</code>).",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
+    student_id = sub["student_id"]
+    cached = _db.get_schedule(f"student_{student_id}")
+    group_name = _get_student_group_name(student_id, cached["data"] if cached else None)
+    tasks = _db.get_tasks(group_name, student_id=student_id)
+
+    text, keyboard, _ = _build_deadlines_content(student_id, group_name, tasks)
+    await message.answer(text, parse_mode=ParseMode.HTML, reply_markup=keyboard, disable_web_page_preview=True)
+
+
+@dp.callback_query(F.data == "view_deadlines")
+async def handle_callback_view_deadlines(call: types.CallbackQuery):
+    if not call.message or isinstance(call.message, types.InaccessibleMessage):
+        return
+    await call.answer()
+    if _db is None:
+        return
+    sub = _db.get_telegram_subscriber(call.message.chat.id)
+    if not sub or not sub.get("is_active"):
+        return
+    student_id = sub["student_id"]
+    cached = _db.get_schedule(f"student_{student_id}")
+    group_name = _get_student_group_name(student_id, cached["data"] if cached else None)
+    tasks = _db.get_tasks(group_name, student_id=student_id)
+    text, keyboard, _ = _build_deadlines_content(student_id, group_name, tasks)
+    if isinstance(call.message, types.Message):
+        await call.message.answer(text, parse_mode=ParseMode.HTML, reply_markup=keyboard, disable_web_page_preview=True)
+
+
+@dp.callback_query(F.data == "view_tasks")
+async def handle_callback_view_tasks(call: types.CallbackQuery):
+    if not call.message or isinstance(call.message, types.InaccessibleMessage):
+        return
+    await call.answer()
+    if isinstance(call.message, types.Message):
+        await handle_tasks_list(call.message)
 
 
 @dp.callback_query(F.data == "sync_tasks")
@@ -1288,7 +1472,8 @@ async def broadcast_app_update(
     message_text = "\n".join(lines).strip()
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📥 Скачать обновление (.APK)", url=APK_DOWNLOAD_URL)],
+        [InlineKeyboardButton(text="📱 Скачать APK для Android", url=APK_DOWNLOAD_URL)],
+        [InlineKeyboardButton(text="💻 Скачать для Windows (.ZIP)", url=WINDOWS_DOWNLOAD_URL)],
         [InlineKeyboardButton(text="📲 Открыть в приложении", url=APP_REDIRECT_URL)],
     ])
 
@@ -1313,6 +1498,110 @@ async def broadcast_app_update(
 
     logger.info(f"Уведомление об обновлении успешно доставлено {delivered}/{len(subscribers)} подписчикам Telegram")
     return delivered
+
+
+async def broadcast_task_deadlines(force: bool = False) -> int:
+    """
+    Рассылает подписчикам Telegram автоматическое напоминание о горящих дедлайнах по практикам.
+    Отправляет уведомление, если есть просроченные задания, дедлайны на сегодня, завтра или ближайшие 3 дня.
+    По умолчанию отправляется не чаще одного раза в сутки для каждого пользователя.
+    """
+    if _db is None or bot is None:
+        return 0
+
+    subscribers = _db.get_telegram_subscribers()
+    if not subscribers:
+        return 0
+
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    delivered = 0
+
+    for sub in subscribers:
+        chat_id = sub["chat_id"]
+        student_id = sub["student_id"]
+
+        if not force:
+            last_date = _db.get_setting(f"deadline_notify_date_{chat_id}")
+            if last_date == today_str:
+                continue
+
+        cached = _db.get_schedule(f"student_{student_id}")
+        group_name = _get_student_group_name(student_id, cached["data"] if cached else None)
+        tasks = _db.get_tasks(group_name, student_id=student_id)
+
+        text, keyboard, has_urgent = _build_deadlines_content(student_id, group_name, tasks)
+        if not has_urgent and not force:
+            continue
+
+        try:
+            await bot.send_message(
+                chat_id=chat_id,
+                text=text,
+                parse_mode=ParseMode.HTML,
+                reply_markup=keyboard,
+                disable_web_page_preview=True,
+            )
+            _db.set_setting(f"deadline_notify_date_{chat_id}", today_str)
+            delivered += 1
+            await asyncio.sleep(0.05)
+        except Exception as e:
+            logger.error(f"Не удалось отправить напоминание о дедлайнах в chat {chat_id}: {e}")
+            if "bot was blocked by the user" in str(e).lower() or "user is deactivated" in str(e).lower():
+                _db.unsubscribe_telegram(chat_id)
+
+    if delivered > 0:
+        logger.info(f"Рассылка дедлайнов завершена: доставлено {delivered} подписчикам.")
+    return delivered
+
+
+async def broadcast_new_tasks(group_name: str, new_count: int) -> int:
+    """
+    Рассылает уведомление подписчикам конкретной группы о появлении новых заданий по расписанию.
+    """
+    if _db is None or bot is None or new_count <= 0:
+        return 0
+
+    subscribers = _db.get_telegram_subscribers()
+    if not subscribers:
+        return 0
+
+    delivered = 0
+    text = (
+        f"📝 <b>НОВЫЕ ЗАДАНИЯ ПО ПРАКТИКАМ!</b>\n\n"
+        f"Группа: <b>{group_name}</b>\n"
+        f"Синхронизировано новых заданий из расписания: <b>{new_count}</b>. 🎉\n\n"
+        f"Методички, темы заданий и дедлайны уже доступны в разделе «Задания и практики»."
+    )
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📝 Открыть задания", callback_data="view_tasks")],
+        [InlineKeyboardButton(text="📲 Открыть в приложении", url=APP_REDIRECT_URL)],
+    ])
+
+    for sub in subscribers:
+        chat_id = sub["chat_id"]
+        student_id = sub["student_id"]
+        cached = _db.get_schedule(f"student_{student_id}")
+        sub_group = _get_student_group_name(student_id, cached["data"] if cached else None)
+
+        if sub_group == group_name:
+            try:
+                await bot.send_message(
+                    chat_id=chat_id,
+                    text=text,
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=keyboard,
+                    disable_web_page_preview=True,
+                )
+                delivered += 1
+                await asyncio.sleep(0.05)
+            except Exception as e:
+                logger.error(f"Не удалось отправить уведомление о новых заданиях в chat {chat_id}: {e}")
+                if "bot was blocked by the user" in str(e).lower() or "user is deactivated" in str(e).lower():
+                    _db.unsubscribe_telegram(chat_id)
+
+    return delivered
+
 
 
 async def start_bot_polling():

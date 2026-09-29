@@ -31,7 +31,10 @@ from telegram_bot import (
     start_bot_polling, 
     set_database, 
     broadcast_schedule_changes, 
-    broadcast_app_update
+    broadcast_app_update,
+    broadcast_task_deadlines,
+    broadcast_new_tasks,
+    _get_student_group_name,
 )
 
 
@@ -102,6 +105,18 @@ async def sync_target(target_id: str, student_id: int | str):
         data=fetch_res.data,
         date_uploading=fetch_res.upload_date
     )
+
+    # Синхронизируем практические занятия в модуль заданий
+    try:
+        group_name = _get_student_group_name(student_id, fetch_res.data)
+        lessons = extract_lessons(fetch_res.data)
+        new_tasks = db.sync_tasks_from_schedule(group_name, lessons)
+        if new_tasks > 0:
+            logger.info(f"Синхронизировано {new_tasks} новых заданий для {group_name}")
+            await broadcast_new_tasks(group_name, new_tasks)
+    except Exception as sync_e:
+        logger.warning(f"Ошибка синхронизации заданий для {target_id}: {sync_e}")
+
     logger.info(f"Синхронизация {target_id} успешно завершена")
 
 
@@ -134,6 +149,12 @@ async def periodic_check_job():
         await check_and_notify_apk_update()
     except Exception as e:
         logger.error(f"Ошибка при периодической проверке обновления APK: {e}")
+
+    # Проверка горящих дедлайнов по практикам (раз в день)
+    try:
+        await broadcast_task_deadlines(force=False)
+    except Exception as e:
+        logger.error(f"Ошибка при периодической проверке дедлайнов: {e}")
 
 
 def get_apk_file_hash(apk_path: str) -> Optional[str]:
@@ -222,6 +243,8 @@ async def lifespan(app: FastAPI):
 
     # Опрос каждые 45 минут (в дневное время)
     scheduler.add_job(periodic_check_job, "interval", minutes=45, id="schedule_checker")
+    # Напоминание о дедлайнах каждое утро в 09:00
+    scheduler.add_job(broadcast_task_deadlines, "cron", hour=9, minute=0, id="task_deadlines_morning")
     scheduler.start()
     logger.info("Планировщик фоновых проверок успешно запущен (интервал 45 мин)")
     yield
@@ -502,6 +525,22 @@ async def download_apk():
     )
 
 
+@app.api_route("/download/DSTU-schedule-windows.zip", methods=["GET", "HEAD"])
+@app.api_route("/download/windows", methods=["GET", "HEAD"])
+async def download_windows_zip():
+    """Прямое скачивание портативной сборки приложения для Windows (.ZIP)."""
+    zip_path = os.path.join(os.path.dirname(__file__), "DSTU-schedule-windows.zip")
+    if not os.path.exists(zip_path):
+        zip_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "DSTU-schedule-windows.zip")
+    if not os.path.exists(zip_path):
+        raise HTTPException(status_code=404, detail="Сборка для Windows временно недоступна на сервере")
+    return FileResponse(
+        path=zip_path,
+        filename="DSTU-schedule-windows-x64.zip",
+        media_type="application/zip",
+    )
+
+
 @app.get("/app", response_class=HTMLResponse)
 async def open_in_mobile_app(
     student_id: Optional[str] = Query(None),
@@ -577,9 +616,10 @@ async def open_in_mobile_app(
             Открываем расписание в установленном приложении...
         </p>
         <a href="{deep_link}" class="btn">📲 Открыть приложение</a>
-        <a href="/download/DSTU-schedule.apk" class="btn-secondary">📥 Скачать приложение (.APK)</a>
+        <a href="/download/DSTU-schedule.apk" class="btn-secondary">📱 Скачать для Android (.APK)</a>
+        <a href="/download/DSTU-schedule-windows.zip" class="btn-secondary">💻 Скачать для Windows (.ZIP)</a>
         <p style="font-size: 12px; color: #64748b; margin-top: 24px;">
-            Если приложение не открылось автоматически, нажмите кнопку выше или скачайте APK.
+            Если приложение не открылось автоматически, скачайте сборку для вашего устройства.
         </p>
     </div>
 </body>
