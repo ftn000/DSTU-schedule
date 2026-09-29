@@ -47,6 +47,7 @@ sample_rasp.json
 .pub-cache/
 .pub/
 *.apk
+*.patch
 
 # OS generated files
 Thumbs.db
