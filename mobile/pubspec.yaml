@@ -1,7 +1,7 @@
 name: dstu_schedule
 description: "Мобильное приложение расписания ДГТУ с офлайн-кэшем и отслеживанием изменений"
 publish_to: 'none'
-version: 1.5.0+16
+version: 1.6.0+17
 
 environment:
   sdk: '>=3.0.0 <4.0.0'
@@ -9,6 +9,7 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  file_picker: ^8.0.0
   flutter_local_notifications: ^22.3.1
   http: ^1.2.0
   intl: ^0.19.0

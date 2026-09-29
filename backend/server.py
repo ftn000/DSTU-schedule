@@ -14,10 +14,11 @@ import logging
 import asyncio
 import hashlib
 import json
+import uuid
 from typing import Optional, List, Dict, Any
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -233,7 +234,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="DSTU Schedule API",
     description="Бэкенд сервис мониторинга и кэширования расписания ДГТУ",
-    version="1.2.5",
+    version="1.3.0",
     lifespan=lifespan
 )
 
@@ -584,6 +585,231 @@ async def open_in_mobile_app(
 </body>
 </html>"""
     return HTMLResponse(content=html_content)
+
+
+# -------------------------------------------------------------
+# API: Модуль заданий, практик и файлов («Тудушка / Практики»)
+# -------------------------------------------------------------
+
+UPLOADS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "uploads")
+os.makedirs(UPLOADS_DIR, exist_ok=True)
+MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB - строгий лимит размера файла
+
+
+class TaskCreateRequest(BaseModel):
+    group_name: str
+    subject: str
+    title: str
+    lesson_type: Optional[str] = "Практика"
+    lesson_num: Optional[int] = None
+    lesson_date: Optional[str] = None
+    description: Optional[str] = None
+    deadline: Optional[str] = None
+    created_by: Optional[str] = None
+    task_id: Optional[int] = None
+
+
+class TaskSubmissionRequest(BaseModel):
+    student_id: str
+    status: str = "todo"  # todo, in_progress, submitted, accepted
+    text_solution: Optional[str] = None
+    grade: Optional[str] = None
+
+
+class TaskSyncScheduleRequest(BaseModel):
+    group_name: str
+    lessons: List[Dict[str, Any]]
+
+
+@app.get("/api/tasks")
+async def get_tasks(
+    group_name: str = Query(..., description="Название группы, например ВПР42"),
+    student_id: Optional[str] = Query(None, description="ID студента для получения его персонального решения")
+):
+    """Возвращает список заданий группы с файлами заданий и индивидуальными решениями студента."""
+    tasks = db.get_tasks(group_name, student_id)
+    return {"tasks": tasks, "count": len(tasks)}
+
+
+@app.get("/api/tasks/{task_id}")
+async def get_task(
+    task_id: int,
+    student_id: Optional[str] = Query(None, description="ID студента")
+):
+    """Возвращает детальную информацию по одному заданию."""
+    task = db.get_task(task_id, student_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Задание не найдено")
+    return task
+
+
+@app.post("/api/tasks")
+async def create_or_update_task(req: TaskCreateRequest):
+    """Создает или редактирует задание для группы."""
+    task_id = db.create_or_update_task(
+        group_name=req.group_name,
+        subject=req.subject,
+        title=req.title,
+        lesson_type=req.lesson_type or "Практика",
+        lesson_num=req.lesson_num,
+        lesson_date=req.lesson_date,
+        description=req.description,
+        deadline=req.deadline,
+        created_by=req.created_by,
+        task_id=req.task_id
+    )
+    return {"success": True, "task_id": task_id}
+
+
+@app.delete("/api/tasks/{task_id}")
+async def delete_task(task_id: int):
+    """Удаляет задание и все связанные файлы с сервера."""
+    files_to_delete = db.delete_task(task_id)
+    for filename in files_to_delete:
+        file_path = os.path.join(UPLOADS_DIR, filename)
+        if os.path.exists(file_path):
+            try:
+                os.remove(file_path)
+            except Exception as e:
+                logger.warning(f"Ошибка удаления файла {file_path}: {e}")
+    return {"success": True, "task_id": task_id}
+
+
+@app.post("/api/tasks/{task_id}/submission")
+async def save_submission(task_id: int, req: TaskSubmissionRequest):
+    """Сохраняет статус или текстовое решение студента."""
+    sub_id = db.save_submission(
+        task_id=task_id,
+        student_id=req.student_id,
+        status=req.status,
+        text_solution=req.text_solution,
+        grade=req.grade
+    )
+    return {"success": True, "submission_id": sub_id}
+
+
+@app.post("/api/tasks/{task_id}/upload")
+async def upload_task_file_stream(
+    task_id: int,
+    request: Request,
+    filename: str = Query(..., description="Исходное имя файла"),
+    file_type: str = Query("task_attachment", description="task_attachment или submission_attachment"),
+    student_id: Optional[str] = Query(None, description="ID студента при отправке решения")
+):
+    """
+    Загрузка файла потоком байт (без сторонних библиотек multipart).
+    Жесткий лимит 50 МБ.
+    """
+    content_length = request.headers.get("content-length")
+    if content_length and int(content_length) > MAX_FILE_SIZE:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Файл слишком большой. Максимальный лимит: 50 МБ."
+        )
+
+    task = db.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Задание не найдено")
+
+    unique_name = f"{uuid.uuid4().hex[:12]}_{os.path.basename(filename)}"
+    target_path = os.path.join(UPLOADS_DIR, unique_name)
+
+    total_bytes = 0
+    try:
+        with open(target_path, "wb") as f:
+            async for chunk in request.stream():
+                total_bytes += len(chunk)
+                if total_bytes > MAX_FILE_SIZE:
+                    f.close()
+                    if os.path.exists(target_path):
+                        os.remove(target_path)
+                    raise HTTPException(
+                        status_code=413,
+                        detail="Размер файла превышает лимит 50 МБ"
+                    )
+                f.write(chunk)
+    except HTTPException:
+        raise
+    except Exception as e:
+        if os.path.exists(target_path):
+            os.remove(target_path)
+        raise HTTPException(status_code=500, detail=f"Ошибка сохранения файла: {e}")
+
+    submission_id = None
+    if file_type == "submission_attachment":
+        if not student_id:
+            if os.path.exists(target_path):
+                os.remove(target_path)
+            raise HTTPException(status_code=400, detail="Для прикрепления файла к решению требуется student_id")
+        submission_id = db.save_submission(task_id=task_id, student_id=student_id, status="in_progress")
+
+    mime_type = request.headers.get("content-type") or "application/octet-stream"
+    file_id = db.add_task_file(
+        task_id=task_id,
+        submission_id=submission_id,
+        file_type=file_type,
+        filename=filename,
+        stored_filename=unique_name,
+        file_size=total_bytes,
+        mime_type=mime_type,
+        uploaded_by=student_id
+    )
+
+    return {
+        "success": True,
+        "file": {
+            "id": file_id,
+            "task_id": task_id,
+            "submission_id": submission_id,
+            "file_type": file_type,
+            "filename": filename,
+            "file_size": total_bytes,
+            "mime_type": mime_type
+        }
+    }
+
+
+@app.get("/api/tasks/files/{file_id}/download")
+async def download_task_file(file_id: int):
+    """Скачивание файла задания или решения."""
+    record = db.get_task_file(file_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Файл не найден")
+
+    file_path = os.path.join(UPLOADS_DIR, record["stored_filename"])
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="Физический файл отсутствует на сервере")
+
+    return FileResponse(
+        path=file_path,
+        filename=record["filename"],
+        media_type=record.get("mime_type") or "application/octet-stream"
+    )
+
+
+@app.delete("/api/tasks/files/{file_id}")
+async def delete_task_file(file_id: int):
+    """Удаление файла из БД и с диска."""
+    record = db.delete_task_file(file_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Файл не найден")
+
+    file_path = os.path.join(UPLOADS_DIR, record["stored_filename"])
+    if os.path.exists(file_path):
+        try:
+            os.remove(file_path)
+        except Exception as e:
+            logger.warning(f"Ошибка удаления файла с диска: {e}")
+
+    return {"success": True, "file_id": file_id}
+
+
+@app.post("/api/tasks/sync-schedule")
+async def sync_tasks_from_schedule(req: TaskSyncScheduleRequest):
+    """Синхронизирует и создает задания из расписания группы (практики/лабораторные)."""
+    created = db.sync_tasks_from_schedule(req.group_name, req.lessons)
+    return {"success": True, "created_count": created}
+
 
 
 if __name__ == "__main__":

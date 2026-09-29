@@ -66,6 +66,38 @@ class Lesson {
     caseSensitive: false,
   );
 
+  /// Определяет, является ли тема занятия характерной для теоретической лекции
+  static bool isTheoreticalTheme(String? theme) {
+    final t = (theme ?? '').toLowerCase().trim();
+    if (t.isEmpty) return false;
+    return t.contains('лекция') ||
+        t.contains('лекц.') ||
+        t.contains('лек.') ||
+        t.startsWith('тема') ||
+        t.contains('введение') ||
+        t.contains('основы') ||
+        t.contains('теория') ||
+        t.contains('история') ||
+        t.contains('архитектура') ||
+        t.contains('структура') ||
+        t.contains('состояние') ||
+        t.contains('современн') ||
+        t.contains('рынок') ||
+        t.contains('рынка') ||
+        t.contains('концепция') ||
+        t.contains('классификация') ||
+        t.contains('принципы') ||
+        t.contains('методология') ||
+        t.contains('проектная документация') ||
+        t.contains('отчеты о нир') ||
+        t.contains('оформление научных') ||
+        t.contains('визуализация результатов') ||
+        t.contains('проблемы защиты') ||
+        t.contains('особенности реализации') ||
+        t.contains('обучение с подкреплением') ||
+        t.contains('процедурная генерация');
+  }
+
   static String detectLessonType(String originalSubject, String? theme, {String? color}) {
     final s = originalSubject.trim();
     final sLower = s.toLowerCase();
@@ -126,7 +158,12 @@ class Lesson {
       return 'Практика';
     }
 
-    // 5. Анализ по системному цвету потока в ДГТУ / Modeus:
+    // 5. Теоретические названия лекционных тем (имеют приоритет над общим цветом потока)
+    if (isTheoreticalTheme(t)) {
+      return 'Лекция';
+    }
+
+    // 6. Анализ по системному цвету потока в ДГТУ / Modeus:
     // #4caf50 (зеленый), #008000 — поток лекций
     // #5c6bc0, #2196f3, #009688, #ff9800, #ab47bc, #fdd017, #44c8c8 — поток практик
     // #004c3e — лабораторные работы, #ef5350 — контрольные точки / зачеты
@@ -147,28 +184,6 @@ class Lesson {
     }
     if (c == '#ef5350') {
       return 'Зачет';
-    }
-
-    // 6. Теоретические названия лекционных тем
-    if (t.isNotEmpty && (
-        t.startsWith('введение') ||
-        t.startsWith('основы') ||
-        t.startsWith('теория') ||
-        t.startsWith('история') ||
-        t.startsWith('архитектура') ||
-        t.startsWith('проектная документация') ||
-        t.startsWith('отчеты о нир') ||
-        t.startsWith('оформление научных') ||
-        t.startsWith('визуализация результатов') ||
-        t.startsWith('принципы') ||
-        t.startsWith('методология') ||
-        t.startsWith('современные тренды') ||
-        t.startsWith('проблемы защиты') ||
-        t.startsWith('особенности реализации') ||
-        t.startsWith('обучение с подкреплением') ||
-        t.startsWith('процедурная генерация')
-    )) {
-      return 'Лекция';
     }
 
     // 7. По умолчанию считаем практикой

@@ -35,6 +35,8 @@ class ApiService {
 
   // --- Методы управления авторизацией / сохраненным студентом ---
 
+  static const String _savedGroupNameKey = 'saved_group_name';
+
   Future<int?> getSavedStudentId() async {
     final prefs = await SharedPreferences.getInstance();
     return prefs.getInt(_savedIdKey);
@@ -45,9 +47,20 @@ class ApiService {
     await prefs.setInt(_savedIdKey, studentId);
   }
 
+  Future<String?> getSavedGroupName() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString(_savedGroupNameKey);
+  }
+
+  Future<void> saveGroupName(String groupName) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_savedGroupNameKey, groupName);
+  }
+
   Future<void> clearSavedStudentId() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_savedIdKey);
+    await prefs.remove(_savedGroupNameKey);
   }
 
   static const String _readChangeIdsKey = 'read_change_ids';
@@ -490,6 +503,10 @@ class ApiService {
 
     _refineLessonTypesByStreamContext(lessons);
 
+    if (groupName.isNotEmpty && groupName != 'Группа') {
+      saveGroupName(groupName);
+    }
+
     return ScheduleResponse(
       lessons: lessons,
       groupName: groupName,
@@ -524,7 +541,9 @@ class ApiService {
         final sameTheme = group.every((l) => (l.theme ?? '') == (first.theme ?? ''));
         final sameColor = group.every((l) => (l.color ?? '') == (first.color ?? ''));
         final themeLower = (first.theme ?? '').toLowerCase();
-        final isExplicitLecture = themeLower.contains('лекция') || themeLower.contains('лек.');
+        final isExplicitLecture = themeLower.contains('лекция') ||
+            themeLower.contains('лек.') ||
+            Lesson.isTheoreticalTheme(first.theme);
         if (sameTheme && sameColor && !isExplicitLecture) {
           for (final l in group) {
             if (l.lessonType == 'Лекция') {
@@ -578,7 +597,7 @@ class ApiService {
         if (pracColor != null && lecColor != null) {
           for (final l in byColor[pracColor]!) {
             final tLow = (l.theme ?? '').toLowerCase();
-            if (!tLow.contains('лекция')) {
+            if (!tLow.contains('лекция') && !Lesson.isTheoreticalTheme(l.theme)) {
               l.lessonType = 'Практика';
             }
           }

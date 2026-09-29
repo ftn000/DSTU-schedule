@@ -17,6 +17,7 @@ class Database:
 
     def _get_connection(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_path)
+        conn.execute("PRAGMA foreign_keys = ON")
         conn.row_factory = sqlite3.Row
         return conn
 
@@ -96,6 +97,62 @@ class Database:
                     updated_at TIMESTAMP NOT NULL
                 )
             """)
+
+            # Таблица заданий и практических занятий (общие для группы)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS tasks (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    group_name TEXT NOT NULL,
+                    subject TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    lesson_type TEXT DEFAULT 'Практика',
+                    lesson_num INTEGER,
+                    lesson_date TEXT,
+                    description TEXT,
+                    deadline TEXT,
+                    created_by TEXT,
+                    created_at TIMESTAMP NOT NULL,
+                    updated_at TIMESTAMP NOT NULL
+                )
+            """)
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_tasks_group ON tasks(group_name)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_tasks_date ON tasks(lesson_date)")
+
+            # Таблица индивидуальных решений/статусов студентов
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS student_submissions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    task_id INTEGER NOT NULL,
+                    student_id TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'todo',
+                    text_solution TEXT,
+                    grade TEXT,
+                    updated_at TIMESTAMP NOT NULL,
+                    FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE,
+                    UNIQUE(task_id, student_id)
+                )
+            """)
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_submissions_task_student ON student_submissions(task_id, student_id)")
+
+            # Таблица прикрепленных файлов (методички к заданию или файлы решения студента)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS task_files (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    task_id INTEGER NOT NULL,
+                    submission_id INTEGER,
+                    file_type TEXT NOT NULL,
+                    filename TEXT NOT NULL,
+                    stored_filename TEXT NOT NULL,
+                    file_size INTEGER NOT NULL,
+                    mime_type TEXT,
+                    uploaded_by TEXT,
+                    created_at TIMESTAMP NOT NULL,
+                    FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE,
+                    FOREIGN KEY (submission_id) REFERENCES student_submissions(id) ON DELETE CASCADE
+                )
+            """)
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_task_files_task ON task_files(task_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_task_files_submission ON task_files(submission_id)")
             
             conn.commit()
 
@@ -310,3 +367,328 @@ class Database:
                     updated_at = excluded.updated_at
             """, (key, str(value), now))
             conn.commit()
+
+    # ---------------------------------------------------------
+    # МОДУЛЬ ЗАДАНИЙ, ПРАКТИК И ФАЙЛОВ (ТУДУШКА)
+    # ---------------------------------------------------------
+
+    def get_tasks(self, group_name: str, student_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Возвращает список заданий для академической группы с индивидуальными статусами студента."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT id, group_name, subject, title, lesson_type, lesson_num, lesson_date,
+                       description, deadline, created_by, created_at, updated_at
+                FROM tasks
+                WHERE LOWER(TRIM(group_name)) = LOWER(TRIM(?))
+                ORDER BY 
+                    CASE WHEN lesson_date IS NULL OR lesson_date = '' THEN 1 ELSE 0 END,
+                    lesson_date DESC,
+                    id DESC
+            """, (group_name,))
+            rows = cursor.fetchall()
+            task_list = [dict(r) for r in rows]
+
+            if not task_list:
+                return []
+
+            task_ids = [t["id"] for t in task_list]
+            placeholders = ",".join("?" for _ in task_ids)
+
+            # Получаем общие файлы заданий
+            cursor.execute(f"""
+                SELECT id, task_id, submission_id, file_type, filename, stored_filename, file_size, mime_type, uploaded_by, created_at
+                FROM task_files
+                WHERE task_id IN ({placeholders}) AND file_type = 'task_attachment'
+                ORDER BY id ASC
+            """, task_ids)
+            task_files_map: Dict[int, List[Dict[str, Any]]] = {}
+            for f in cursor.fetchall():
+                fd = dict(f)
+                task_files_map.setdefault(fd["task_id"], []).append(fd)
+
+            # Получаем решения и файлы решений студента, если student_id передан
+            submissions_map: Dict[int, Dict[str, Any]] = {}
+            if student_id:
+                clean_student_id = str(student_id).replace("student_", "")
+                cursor.execute(f"""
+                    SELECT id, task_id, student_id, status, text_solution, grade, updated_at
+                    FROM student_submissions
+                    WHERE task_id IN ({placeholders}) AND student_id = ?
+                """, task_ids + [clean_student_id])
+                sub_rows = cursor.fetchall()
+                sub_ids = []
+                for s in sub_rows:
+                    sd = dict(s)
+                    sd["files"] = []
+                    submissions_map[sd["task_id"]] = sd
+                    sub_ids.append(sd["id"])
+
+                if sub_ids:
+                    sub_placeholders = ",".join("?" for _ in sub_ids)
+                    cursor.execute(f"""
+                        SELECT id, task_id, submission_id, file_type, filename, stored_filename, file_size, mime_type, uploaded_by, created_at
+                        FROM task_files
+                        WHERE submission_id IN ({sub_placeholders})
+                        ORDER BY id ASC
+                    """, sub_ids)
+                    for f in cursor.fetchall():
+                        fd = dict(f)
+                        if fd["task_id"] in submissions_map:
+                            submissions_map[fd["task_id"]]["files"].append(fd)
+
+            for t in task_list:
+                t["task_files"] = task_files_map.get(t["id"], [])
+                t["submission"] = submissions_map.get(t["id"], {
+                    "id": None,
+                    "task_id": t["id"],
+                    "student_id": str(student_id or ""),
+                    "status": "todo",
+                    "text_solution": "",
+                    "grade": None,
+                    "updated_at": None,
+                    "files": []
+                })
+
+            return task_list
+
+    def get_task(self, task_id: int, student_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """Возвращает информацию по конкретному заданию с файлами и решением студента."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT id, group_name, subject, title, lesson_type, lesson_num, lesson_date,
+                       description, deadline, created_by, created_at, updated_at
+                FROM tasks
+                WHERE id = ?
+            """, (task_id,))
+            row = cursor.fetchone()
+            if not row:
+                return None
+            task = dict(row)
+
+            # Файлы задания
+            cursor.execute("""
+                SELECT id, task_id, submission_id, file_type, filename, stored_filename, file_size, mime_type, uploaded_by, created_at
+                FROM task_files
+                WHERE task_id = ? AND file_type = 'task_attachment'
+                ORDER BY id ASC
+            """, (task_id,))
+            task["task_files"] = [dict(f) for f in cursor.fetchall()]
+
+            # Решение студента
+            submission = {
+                "id": None,
+                "task_id": task_id,
+                "student_id": str(student_id or ""),
+                "status": "todo",
+                "text_solution": "",
+                "grade": None,
+                "updated_at": None,
+                "files": []
+            }
+            if student_id:
+                clean_student_id = str(student_id).replace("student_", "")
+                cursor.execute("""
+                    SELECT id, task_id, student_id, status, text_solution, grade, updated_at
+                    FROM student_submissions
+                    WHERE task_id = ? AND student_id = ?
+                """, (task_id, clean_student_id))
+                srow = cursor.fetchone()
+                if srow:
+                    submission = dict(srow)
+                    cursor.execute("""
+                        SELECT id, task_id, submission_id, file_type, filename, stored_filename, file_size, mime_type, uploaded_by, created_at
+                        FROM task_files
+                        WHERE submission_id = ?
+                        ORDER BY id ASC
+                    """, (submission["id"],))
+                    submission["files"] = [dict(f) for f in cursor.fetchall()]
+            task["submission"] = submission
+            return task
+
+    def create_or_update_task(
+        self,
+        group_name: str,
+        subject: str,
+        title: str,
+        lesson_type: str = "Практика",
+        lesson_num: Optional[int] = None,
+        lesson_date: Optional[str] = None,
+        description: Optional[str] = None,
+        deadline: Optional[str] = None,
+        created_by: Optional[str] = None,
+        task_id: Optional[int] = None
+    ) -> int:
+        """Создает или обновляет задание для группы."""
+        now = datetime.now().isoformat()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            if task_id:
+                cursor.execute("""
+                    UPDATE tasks
+                    SET group_name = ?, subject = ?, title = ?, lesson_type = ?,
+                        lesson_num = ?, lesson_date = ?, description = ?, deadline = ?,
+                        updated_at = ?
+                    WHERE id = ?
+                """, (group_name, subject, title, lesson_type, lesson_num, lesson_date, description, deadline, now, task_id))
+                conn.commit()
+                return task_id
+            else:
+                cursor.execute("""
+                    INSERT INTO tasks (group_name, subject, title, lesson_type, lesson_num, lesson_date, description, deadline, created_by, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (group_name, subject, title, lesson_type, lesson_num, lesson_date, description, deadline, created_by, now, now))
+                conn.commit()
+                return cursor.lastrowid
+
+    def delete_task(self, task_id: int) -> List[str]:
+        """Удаляет задание и возвращает список имен файлов на диске для физического удаления."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT stored_filename FROM task_files WHERE task_id = ?", (task_id,))
+            files_to_delete = [r["stored_filename"] for r in cursor.fetchall()]
+            cursor.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
+            conn.commit()
+            return files_to_delete
+
+    def save_submission(
+        self,
+        task_id: int,
+        student_id: str,
+        status: str = "todo",
+        text_solution: Optional[str] = None,
+        grade: Optional[str] = None
+    ) -> int:
+        """Создает или обновляет запись о решении студента."""
+        now = datetime.now().isoformat()
+        clean_student_id = str(student_id).replace("student_", "")
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO student_submissions (task_id, student_id, status, text_solution, grade, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(task_id, student_id) DO UPDATE SET
+                    status = excluded.status,
+                    text_solution = CASE WHEN excluded.text_solution IS NOT NULL THEN excluded.text_solution ELSE student_submissions.text_solution END,
+                    grade = CASE WHEN excluded.grade IS NOT NULL THEN excluded.grade ELSE student_submissions.grade END,
+                    updated_at = excluded.updated_at
+            """, (task_id, clean_student_id, status, text_solution, grade, now))
+            conn.commit()
+            cursor.execute("SELECT id FROM student_submissions WHERE task_id = ? AND student_id = ?", (task_id, clean_student_id))
+            row = cursor.fetchone()
+            return row["id"] if row else 0
+
+    def add_task_file(
+        self,
+        task_id: int,
+        file_type: str,
+        filename: str,
+        stored_filename: str,
+        file_size: int,
+        mime_type: Optional[str] = None,
+        uploaded_by: Optional[str] = None,
+        submission_id: Optional[int] = None
+    ) -> int:
+        """Добавляет запись о прикрепленном файле."""
+        now = datetime.now().isoformat()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO task_files (task_id, submission_id, file_type, filename, stored_filename, file_size, mime_type, uploaded_by, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (task_id, submission_id, file_type, filename, stored_filename, file_size, mime_type, uploaded_by, now))
+            conn.commit()
+            return cursor.lastrowid
+
+    def get_task_file(self, file_id: int) -> Optional[Dict[str, Any]]:
+        """Возвращает метаданные файла по его ID."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM task_files WHERE id = ?", (file_id,))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    def delete_task_file(self, file_id: int) -> Optional[Dict[str, Any]]:
+        """Удаляет файл из БД и возвращает его запись для удаления с диска."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM task_files WHERE id = ?", (file_id,))
+            row = cursor.fetchone()
+            if not row:
+                return None
+            record = dict(row)
+            cursor.execute("DELETE FROM task_files WHERE id = ?", (file_id,))
+            conn.commit()
+            return record
+
+    def sync_tasks_from_schedule(self, group_name: str, lessons: List[Dict[str, Any]]) -> int:
+        """
+        Автоматически генерирует задания для практик и лабораторных из расписания группы.
+        Не создает дубликаты.
+        """
+        created_count = 0
+        now = datetime.now().isoformat()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            for l in lessons:
+                l_type = l.get("lessonType") or l.get("тип") or ""
+                subject = l.get("subject") or l.get("дисциплина") or ""
+                theme = (l.get("theme") or l.get("тема") or "").strip()
+                date_str = l.get("date") or l.get("дата") or ""
+                if "T" in date_str:
+                    date_str = date_str.split("T")[0]
+                num = l.get("num") or l.get("пара") or None
+                if num:
+                    try:
+                        num = int(num)
+                    except (ValueError, TypeError):
+                        num = None
+
+                is_practice = any(p in l_type.lower() for p in ("практик", "лаборатор", "семинар", "проект"))
+                if not is_practice or not subject:
+                    continue
+
+                if theme:
+                    title = f"{l_type}: {theme}"
+                elif num:
+                    title = f"{l_type} №{num}"
+                else:
+                    title = f"{l_type}: {subject}"
+
+                if theme:
+                    cursor.execute("""
+                        SELECT id FROM tasks 
+                        WHERE LOWER(TRIM(group_name)) = LOWER(TRIM(?)) 
+                          AND LOWER(TRIM(subject)) = LOWER(TRIM(?))
+                          AND (lesson_date = ? OR title = ?)
+                    """, (group_name, subject, date_str, title))
+                else:
+                    cursor.execute("""
+                        SELECT id FROM tasks 
+                        WHERE LOWER(TRIM(group_name)) = LOWER(TRIM(?)) 
+                          AND LOWER(TRIM(subject)) = LOWER(TRIM(?))
+                          AND lesson_date = ?
+                          AND (lesson_num = ? OR title = ?)
+                    """, (group_name, subject, date_str, num, title))
+
+                exists = cursor.fetchone()
+                if not exists:
+                    cursor.execute("""
+                        INSERT INTO tasks (group_name, subject, title, lesson_type, lesson_num, lesson_date, description, created_by, created_at, updated_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, 'system_sync', ?, ?)
+                    """, (
+                        group_name,
+                        subject,
+                        title,
+                        l_type,
+                        num,
+                        date_str,
+                        f"Создано автоматически из расписания на {date_str} (пара {num or '-'}).",
+                        now,
+                        now
+                    ))
+                    created_count += 1
+
+            conn.commit()
+        return created_count

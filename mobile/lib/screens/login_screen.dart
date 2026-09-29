@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../config/app_config.dart';
 import '../services/api_service.dart';
-import 'schedule_screen.dart';
+import 'main_shell_screen.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -62,11 +62,11 @@ class _LoginScreenState extends State<LoginScreen> {
         ),
       );
 
-      // Переходим к экрану расписания
+      // Переходим к главному экрану приложения (расписание + практики)
       Navigator.pushReplacement(
         context,
         MaterialPageRoute(
-          builder: (context) => ScheduleScreen(studentId: id),
+          builder: (context) => MainShellScreen(studentId: id),
         ),
       );
     } catch (e) {

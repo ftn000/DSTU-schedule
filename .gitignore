@@ -31,6 +31,8 @@ ENV/
 *.log
 local_cache/
 sample_rasp.json
+uploads/
+backend/uploads/
 
 # IDEs & Editors
 .vscode/

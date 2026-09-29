@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import 'services/api_service.dart';
 import 'services/notification_service.dart';
 import 'services/background_service.dart';
-import 'screens/schedule_screen.dart';
+import 'screens/main_shell_screen.dart';
 import 'screens/login_screen.dart';
 
 void main() async {
@@ -66,7 +66,7 @@ class DstuScheduleApp extends StatelessWidget {
       ),
       themeMode: ThemeMode.system,
       home: initialStudentId != null
-          ? ScheduleScreen(studentId: initialStudentId!)
+          ? MainShellScreen(studentId: initialStudentId!)
           : const LoginScreen(),
     );
   }
