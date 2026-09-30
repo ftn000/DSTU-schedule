@@ -4,6 +4,9 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
+val keystorePropertiesFile = rootProject.file("key.properties")
+val localJks = file("dstu_release.jks")
+
 android {
     namespace = "com.example.dstu_schedule"
     compileSdk = 36
@@ -30,9 +33,6 @@ android {
         versionName = flutter.versionName
     }
 
-    val keystorePropertiesFile = rootProject.file("key.properties")
-    val localJks = file("dstu_release.jks")
-
     if (keystorePropertiesFile.exists() || localJks.exists()) {
         signingConfigs {
             create("release") {
@@ -42,8 +42,7 @@ android {
                     keyAlias = keystoreProperties["keyAlias"] as String
                     keyPassword = keystoreProperties["keyPassword"] as String
                     val storeFilePath = keystoreProperties["storeFile"] as String
-                    val candFile = file(storeFilePath)
-                    storeFile = if (candFile.exists()) candFile else rootProject.file("app/$storeFilePath")
+                    storeFile = rootProject.file(storeFilePath)
                     storePassword = keystoreProperties["storePassword"] as String
                 } else {
                     keyAlias = "dstu_schedule"
