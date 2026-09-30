@@ -245,17 +245,18 @@ class Database:
             """, records)
             conn.commit()
 
-    def get_recent_changes(self, target_id: str, limit: int = 50) -> List[Dict[str, Any]]:
-        """Возвращает историю изменений для студента/группы."""
+    def get_recent_changes(self, target_id: str, limit: int = 50, max_days: int = 3) -> List[Dict[str, Any]]:
+        """Возвращает историю изменений для студента/группы (по умолчанию за последние 3 дня)."""
+        cutoff = (datetime.now() - timedelta(days=max_days)).isoformat()
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("""
                 SELECT id, change_type, lesson_id, lesson_date, lesson_num, subject, details, human_message, lesson_data, detected_at
                 FROM changes_history
-                WHERE target_id = ?
+                WHERE target_id = ? AND detected_at >= ?
                 ORDER BY id DESC
                 LIMIT ?
-            """, (target_id, limit))
+            """, (target_id, cutoff, limit))
             results = []
             for row in cursor.fetchall():
                 d = dict(row)

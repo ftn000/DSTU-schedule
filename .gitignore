@@ -51,6 +51,9 @@ backend/uploads/
 *.apk
 *.zip
 *.patch
+*.jks
+*.keystore
+key.properties
 
 # OS generated files
 Thumbs.db

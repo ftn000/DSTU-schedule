@@ -339,16 +339,6 @@ class ApiService {
             break;
         }
       }
-
-      // Сигнатура для отмененных пар старше 24ч (чтобы гарантированно убрать из расписания)
-      if (changeType == 'CANCELLED' && !isRecent) {
-        final chDate = (ch['lesson_date'] as String? ?? ch['date'] as String? ?? '').split('T')[0];
-        final chNum = ch['lesson_num'] != null ? int.tryParse(ch['lesson_num'].toString()) ?? 0 : 0;
-        final chSubj = normSubj(ch['subject'] as String? ?? '');
-        if (chDate.isNotEmpty && chNum > 0 && chSubj.isNotEmpty) {
-          expiredCancelledSignatures.add('${chDate}_${chNum}_$chSubj');
-        }
-      }
     }
 
     // Парсим занятия и фильтруем военную кафедру
@@ -356,14 +346,6 @@ class ApiService {
         .map((item) => Lesson.fromJson(item as Map<String, dynamic>))
         .where((lesson) => !lesson.isMilitaryTraining)
         .toList();
-
-    // Удаляем пары, отмененные более 24 часов назад
-    lessons.removeWhere((l) {
-      if (expiredCancelledLessonIds.contains(l.id)) return true;
-      final dateKey = l.rawDate.split('T')[0];
-      final sig = '${dateKey}_${l.lessonNum}_${normSubj(l.subject)}';
-      return expiredCancelledSignatures.contains(sig);
-    });
 
     // Добавляем отмененные пары, которых уже нет в основном расписании ДГТУ.
     // Спустя 24 часа после отмены пара просто удаляется из списка (не добавляется).
