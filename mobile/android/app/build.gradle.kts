@@ -30,34 +30,38 @@ android {
         versionName = flutter.versionName
     }
 
-    signingConfigs {
-        create("release") {
-            val keystorePropertiesFile = rootProject.file("key.properties")
-            if (keystorePropertiesFile.exists()) {
-                val keystoreProperties = java.util.Properties()
-                keystoreProperties.load(java.io.FileInputStream(keystorePropertiesFile))
-                keyAlias = keystoreProperties["keyAlias"] as String
-                keyPassword = keystoreProperties["keyPassword"] as String
-                val storeFilePath = keystoreProperties["storeFile"] as String
-                val candFile = file(storeFilePath)
-                storeFile = if (candFile.exists()) candFile else rootProject.file("app/$storeFilePath")
-                storePassword = keystoreProperties["storePassword"] as String
-            } else if (file("dstu_release.jks").exists()) {
-                keyAlias = "dstu_schedule"
-                keyPassword = "dstu_schedule_pass_2026"
-                storeFile = file("dstu_release.jks")
-                storePassword = "dstu_schedule_pass_2026"
+    val keystorePropertiesFile = rootProject.file("key.properties")
+    val localJks = file("dstu_release.jks")
+
+    if (keystorePropertiesFile.exists() || localJks.exists()) {
+        signingConfigs {
+            create("release") {
+                if (keystorePropertiesFile.exists()) {
+                    val keystoreProperties = java.util.Properties()
+                    keystoreProperties.load(java.io.FileInputStream(keystorePropertiesFile))
+                    keyAlias = keystoreProperties["keyAlias"] as String
+                    keyPassword = keystoreProperties["keyPassword"] as String
+                    val storeFilePath = keystoreProperties["storeFile"] as String
+                    val candFile = file(storeFilePath)
+                    storeFile = if (candFile.exists()) candFile else rootProject.file("app/$storeFilePath")
+                    storePassword = keystoreProperties["storePassword"] as String
+                } else {
+                    keyAlias = "dstu_schedule"
+                    keyPassword = "dstu_schedule_pass_2026"
+                    storeFile = localJks
+                    storePassword = "dstu_schedule_pass_2026"
+                }
+                enableV1Signing = true
+                enableV2Signing = true
+                enableV3Signing = true
             }
-            enableV1Signing = true
-            enableV2Signing = true
-            enableV3Signing = true
         }
     }
 
     buildTypes {
         release {
-            val relConfig = signingConfigs.getByName("release")
-            signingConfig = if (relConfig.storeFile != null && relConfig.storeFile!!.exists()) relConfig else signingConfigs.getByName("debug")
+            val relConfig = signingConfigs.findByName("release")
+            signingConfig = relConfig ?: signingConfigs.getByName("debug")
         }
     }
 }
