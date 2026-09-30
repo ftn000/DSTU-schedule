@@ -11,6 +11,8 @@ jobs:
   build:
     name: Build Release APK
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
 
     steps:
       - name: Checkout repository
@@ -32,6 +34,12 @@ jobs:
         working-directory: mobile
         run: flutter pub get
 
+      - name: Restore Keystore if secret configured
+        if: env.RELEASE_KEYSTORE_BASE64 != ''
+        run: echo "$RELEASE_KEYSTORE_BASE64" | base64 -d > mobile/android/app/dstu_release.jks
+        env:
+          RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+
       - name: Build Release APK
         working-directory: mobile
         run: flutter build apk --release
@@ -45,3 +53,20 @@ jobs:
           name: DSTU-schedule-apk
           path: DSTU-schedule.apk
           retention-days: 30
+
+      - name: Extract version
+        id: get_version
+        run: |
+          VERSION=$(python3 -c "import json; print(json.load(open('backend/version.json'))['version'])")
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Create or Update GitHub Release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: "v${{ steps.get_version.outputs.version }}"
+          name: "Релиз v${{ steps.get_version.outputs.version }}"
+          files: DSTU-schedule.apk
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
