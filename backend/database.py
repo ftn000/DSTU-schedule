@@ -112,11 +112,17 @@ class Database:
                     deadline TEXT,
                     created_by TEXT,
                     created_at TIMESTAMP NOT NULL,
-                    updated_at TIMESTAMP NOT NULL
+                    updated_at TIMESTAMP NOT NULL,
+                    semester TEXT
                 )
             """)
+            try:
+                cursor.execute("ALTER TABLE tasks ADD COLUMN semester TEXT")
+            except Exception:
+                pass
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_tasks_group ON tasks(group_name)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_tasks_date ON tasks(lesson_date)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_tasks_semester ON tasks(semester)")
 
             # Таблица индивидуальных решений/статусов студентов
             cursor.execute("""
@@ -373,13 +379,38 @@ class Database:
     # МОДУЛЬ ЗАДАНИЙ, ПРАКТИК И ФАЙЛОВ (ТУДУШКА)
     # ---------------------------------------------------------
 
-    def get_tasks(self, group_name: str, student_id: Optional[str] = None) -> List[Dict[str, Any]]:
+    @staticmethod
+    def resolve_semester_name(date_str: Optional[str] = None, fallback_dt: Optional[datetime] = None) -> str:
+        """
+        Возвращает стандартизированное название семестра:
+        'Осень 2026', 'Весна 2026' и т.д.
+        Сентябрь-январь: Осень {год начала}
+        Февраль-август: Весна {год}
+        """
+        dt = fallback_dt or datetime.now()
+        if date_str:
+            try:
+                clean = date_str.split("T")[0]
+                dt = datetime.strptime(clean, "%Y-%m-%d")
+            except Exception:
+                pass
+
+        year = dt.year
+        month = dt.month
+        if month >= 9:
+            return f"Осень {year}"
+        elif month == 1:
+            return f"Осень {year - 1}"
+        else:
+            return f"Весна {year}"
+
+    def get_tasks(self, group_name: str, student_id: Optional[str] = None, semester: Optional[str] = None) -> List[Dict[str, Any]]:
         """Возвращает список заданий для академической группы с индивидуальными статусами студента."""
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("""
                 SELECT id, group_name, subject, title, lesson_type, lesson_num, lesson_date,
-                       description, deadline, created_by, created_at, updated_at
+                       description, deadline, created_by, created_at, updated_at, semester
                 FROM tasks
                 WHERE LOWER(TRIM(group_name)) = LOWER(TRIM(?))
                 ORDER BY 
@@ -438,7 +469,10 @@ class Database:
                         if fd["task_id"] in submissions_map:
                             submissions_map[fd["task_id"]]["files"].append(fd)
 
+            filtered_list = []
             for t in task_list:
+                if not t.get("semester"):
+                    t["semester"] = self.resolve_semester_name(t.get("lesson_date") or t.get("deadline") or t.get("created_at"))
                 t["task_files"] = task_files_map.get(t["id"], [])
                 t["submission"] = submissions_map.get(t["id"], {
                     "id": None,
@@ -450,8 +484,11 @@ class Database:
                     "updated_at": None,
                     "files": []
                 })
+                if semester and semester != "Все" and t.get("semester") != semester:
+                    continue
+                filtered_list.append(t)
 
-            return task_list
+            return filtered_list
 
     def get_task(self, task_id: int, student_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Возвращает информацию по конкретному заданию с файлами и решением студента."""
@@ -459,7 +496,7 @@ class Database:
             cursor = conn.cursor()
             cursor.execute("""
                 SELECT id, group_name, subject, title, lesson_type, lesson_num, lesson_date,
-                       description, deadline, created_by, created_at, updated_at
+                       description, deadline, created_by, created_at, updated_at, semester
                 FROM tasks
                 WHERE id = ?
             """, (task_id,))
@@ -467,6 +504,8 @@ class Database:
             if not row:
                 return None
             task = dict(row)
+            if not task.get("semester"):
+                task["semester"] = self.resolve_semester_name(task.get("lesson_date") or task.get("deadline") or task.get("created_at"))
 
             # Файлы задания
             cursor.execute("""
@@ -519,10 +558,13 @@ class Database:
         description: Optional[str] = None,
         deadline: Optional[str] = None,
         created_by: Optional[str] = None,
-        task_id: Optional[int] = None
+        task_id: Optional[int] = None,
+        semester: Optional[str] = None
     ) -> int:
         """Создает или обновляет задание для группы."""
         now = datetime.now().isoformat()
+        if not semester:
+            semester = self.resolve_semester_name(lesson_date or deadline or now)
         with self._get_connection() as conn:
             cursor = conn.cursor()
             if task_id:
@@ -530,16 +572,16 @@ class Database:
                     UPDATE tasks
                     SET group_name = ?, subject = ?, title = ?, lesson_type = ?,
                         lesson_num = ?, lesson_date = ?, description = ?, deadline = ?,
-                        updated_at = ?
+                        updated_at = ?, semester = ?
                     WHERE id = ?
-                """, (group_name, subject, title, lesson_type, lesson_num, lesson_date, description, deadline, now, task_id))
+                """, (group_name, subject, title, lesson_type, lesson_num, lesson_date, description, deadline, now, semester, task_id))
                 conn.commit()
                 return task_id
             else:
                 cursor.execute("""
-                    INSERT INTO tasks (group_name, subject, title, lesson_type, lesson_num, lesson_date, description, deadline, created_by, created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (group_name, subject, title, lesson_type, lesson_num, lesson_date, description, deadline, created_by, now, now))
+                    INSERT INTO tasks (group_name, subject, title, lesson_type, lesson_num, lesson_date, description, deadline, created_by, created_at, updated_at, semester)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (group_name, subject, title, lesson_type, lesson_num, lesson_date, description, deadline, created_by, now, now, semester))
                 conn.commit()
                 return cursor.lastrowid
 
@@ -631,8 +673,8 @@ class Database:
         created_count = 0
         now = datetime.now()
         now_iso = now.isoformat()
-        # Ограничиваемся текущим семестром (например, последние 90 дней)
-        min_date = (now - timedelta(days=90)).strftime("%Y-%m-%d")
+        # Горизонт синхронизации для поддержки истории семестров (2 года)
+        min_date = (now - timedelta(days=730)).strftime("%Y-%m-%d")
 
         with self._get_connection() as conn:
             cursor = conn.cursor()
@@ -646,7 +688,7 @@ class Database:
                 if "T" in date_str:
                     date_str = date_str.split("T")[0]
 
-                # Фильтруем старые архивные занятия прошлых семестров
+                # Фильтруем слишком старые архивные занятия
                 if date_str and date_str < min_date:
                     continue
 
@@ -689,6 +731,8 @@ class Database:
                 else:
                     title = f"{l_type}: {subject}"
 
+                sem = l.get("semester") or self.resolve_semester_name(date_str)
+
                 cursor.execute("""
                     SELECT id FROM tasks 
                     WHERE LOWER(TRIM(group_name)) = LOWER(TRIM(?)) 
@@ -699,8 +743,8 @@ class Database:
                 exists = cursor.fetchone()
                 if not exists:
                     cursor.execute("""
-                        INSERT INTO tasks (group_name, subject, title, lesson_type, lesson_num, lesson_date, description, created_by, created_at, updated_at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, 'system_sync', ?, ?)
+                        INSERT INTO tasks (group_name, subject, title, lesson_type, lesson_num, lesson_date, description, created_by, created_at, updated_at, semester)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, 'system_sync', ?, ?, ?)
                     """, (
                         group_name,
                         subject,
@@ -710,7 +754,8 @@ class Database:
                         date_str,
                         f"Создано автоматически из расписания на {date_str} (пара {num or '-'}).",
                         now_iso,
-                        now_iso
+                        now_iso,
+                        sem
                     ))
                     created_count += 1
 

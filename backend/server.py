@@ -647,6 +647,7 @@ class TaskCreateRequest(BaseModel):
     deadline: Optional[str] = None
     created_by: Optional[str] = None
     task_id: Optional[int] = None
+    semester: Optional[str] = None
 
 
 class TaskSubmissionRequest(BaseModel):
@@ -664,10 +665,11 @@ class TaskSyncScheduleRequest(BaseModel):
 @app.get("/api/tasks")
 async def get_tasks(
     group_name: str = Query(..., description="Название группы, например ВПР42"),
-    student_id: Optional[str] = Query(None, description="ID студента для получения его персонального решения")
+    student_id: Optional[str] = Query(None, description="ID студента для получения его персонального решения"),
+    semester: Optional[str] = Query(None, description="Фильтр по семестру, например 'Осень 2026' или 'Все'")
 ):
     """Возвращает список заданий группы с файлами заданий и индивидуальными решениями студента."""
-    tasks = db.get_tasks(group_name, student_id)
+    tasks = db.get_tasks(group_name, student_id, semester=semester)
     return {"tasks": tasks, "count": len(tasks)}
 
 
@@ -696,7 +698,8 @@ async def create_or_update_task(req: TaskCreateRequest):
         description=req.description,
         deadline=req.deadline,
         created_by=req.created_by,
-        task_id=req.task_id
+        task_id=req.task_id,
+        semester=req.semester
     )
     return {"success": True, "task_id": task_id}
 

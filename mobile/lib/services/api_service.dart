@@ -254,7 +254,6 @@ class ApiService {
 
     final cancelledLessonIds = <int>{};
     final expiredCancelledLessonIds = <int>{};
-    final expiredCancelledSignatures = <String>{};
     final roomChangesById = <int, String>{};
     final roomOldAudById = <int, String>{};
     final teacherChangesById = <int, String>{};

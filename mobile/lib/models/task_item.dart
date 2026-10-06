@@ -215,6 +215,7 @@ class TaskItem {
   final String? createdBy;
   final String createdAt;
   final String updatedAt;
+  final String? semester;
   final List<TaskFile> taskFiles;
   StudentSubmission? submission;
 
@@ -231,6 +232,7 @@ class TaskItem {
     this.createdBy,
     required this.createdAt,
     required this.updatedAt,
+    this.semester,
     this.taskFiles = const [],
     this.submission,
   });
@@ -249,6 +251,7 @@ class TaskItem {
       createdBy: json['created_by']?.toString(),
       createdAt: json['created_at']?.toString() ?? '',
       updatedAt: json['updated_at']?.toString() ?? '',
+      semester: json['semester']?.toString(),
       taskFiles: (json['task_files'] as List<dynamic>?)
               ?.map((f) => TaskFile.fromJson(f as Map<String, dynamic>))
               .toList() ??
@@ -273,10 +276,82 @@ class TaskItem {
       'created_by': createdBy,
       'created_at': createdAt,
       'updated_at': updatedAt,
+      'semester': semester,
       'task_files': taskFiles.map((f) => f.toJson()).toList(),
       'submission': submission?.toJson(),
     };
   }
 
   TaskStatus get currentStatus => submission?.status ?? TaskStatus.todo;
+
+  static String formatSemesterFromDate(DateTime date) {
+    final year = date.year;
+    final month = date.month;
+    if (month >= 9) {
+      return 'Осень $year';
+    } else if (month == 1) {
+      return 'Осень ${year - 1}';
+    } else {
+      return 'Весна $year';
+    }
+  }
+
+  static String getCurrentSemesterName() {
+    return formatSemesterFromDate(DateTime.now());
+  }
+
+  static String normalizeSemesterName(String raw) {
+    final s = raw.trim();
+    final lower = s.toLowerCase();
+    final yearMatch = RegExp(r'\d{4}').firstMatch(s);
+    final year = yearMatch != null ? int.tryParse(yearMatch.group(0)!) : null;
+
+    if (lower.contains('осен') || lower.contains('autumn') || lower.contains('fall')) {
+      return year != null ? 'Осень $year' : s;
+    }
+    if (lower.contains('весен') || lower.contains('весна') || lower.contains('spring')) {
+      return year != null ? 'Весна $year' : s;
+    }
+    if (year != null && lower.contains('1')) {
+      return 'Осень $year';
+    }
+    if (year != null && lower.contains('2')) {
+      return 'Весна ${year + 1}';
+    }
+    return s;
+  }
+
+  static int compareSemesters(String semA, String semB) {
+    if (semA == 'Все') return 1;
+    if (semB == 'Все') return -1;
+
+    final yearA = int.tryParse(RegExp(r'\d{4}').firstMatch(semA)?.group(0) ?? '0') ?? 0;
+    final yearB = int.tryParse(RegExp(r'\d{4}').firstMatch(semB)?.group(0) ?? '0') ?? 0;
+
+    if (yearA != yearB) {
+      return yearB.compareTo(yearA);
+    }
+    final isFallA = semA.toLowerCase().contains('осень');
+    final isFallB = semB.toLowerCase().contains('осень');
+    if (isFallA && !isFallB) return -1;
+    if (!isFallA && isFallB) return 1;
+    return semA.compareTo(semB);
+  }
+
+  String get resolvedSemester {
+    final raw = semester?.trim();
+    if (raw != null && raw.isNotEmpty) {
+      return normalizeSemesterName(raw);
+    }
+    final dateCandidate = lessonDate ?? deadline ?? createdAt;
+    if (dateCandidate.isNotEmpty) {
+      try {
+        final parsed = DateTime.tryParse(dateCandidate.split('T')[0]);
+        if (parsed != null) {
+          return formatSemesterFromDate(parsed);
+        }
+      } catch (_) {}
+    }
+    return getCurrentSemesterName();
+  }
 }

@@ -84,6 +84,7 @@ class TasksService {
           'description': task.description,
           'deadline': task.deadline,
           'created_by': task.createdBy,
+          'semester': task.semester ?? task.resolvedSemester,
         }),
       ).timeout(const Duration(seconds: 10));
 

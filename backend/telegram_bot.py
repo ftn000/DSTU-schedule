@@ -917,8 +917,11 @@ async def handle_tasks_list(message: types.Message):
         st = t.get("submission", {}).get("status") or "todo"
         status_counts[st] = status_counts.get(st, 0) + 1
 
+    cur_semester = _db.resolve_semester_name()
+    has_multiple_semesters = len({t.get("semester") for t in tasks if t.get("semester")}) > 1
+
     lines = [
-        f"📝 <b>Задания и практики ({group_name}):</b>\n",
+        f"📝 <b>Задания и практики ({group_name} • {cur_semester}):</b>\n",
         f"📊 <b>Статус:</b> "
         f"⏳ В процессе: <b>{status_counts['in_progress']}</b> | "
         f"⚪️ Не начато: <b>{status_counts['todo']}</b> | "
@@ -949,9 +952,10 @@ async def handle_tasks_list(message: types.Message):
         files_str = f" 📎 {files_count}" if files_count > 0 else ""
         date_str = f" ({t['lesson_date']})" if t.get("lesson_date") else ""
         deadline_str = f" ⏰ <i>до {t['deadline']}</i>" if t.get("deadline") else ""
+        sem_str = f" [<i>{t['semester']}</i>]" if (has_multiple_semesters and t.get("semester")) else ""
 
         lines.append(
-            f"{idx}. {st_emoji} <b>{t['subject']}</b>{date_str}\n"
+            f"{idx}. {st_emoji} <b>{t['subject']}</b>{date_str}{sem_str}\n"
             f"   <b>{t['title']}</b>{files_str}{deadline_str}\n"
             f"   Статус: <i>{st_label}</i>"
         )

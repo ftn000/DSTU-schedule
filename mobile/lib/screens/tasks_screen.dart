@@ -31,12 +31,14 @@ class _TasksScreenState extends State<TasksScreen> {
   String _groupName = 'ВПР42';
   List<TaskItem> _tasks = [];
 
+  late String _selectedSemester;
   String _selectedSubject = 'Все';
   TaskStatus? _selectedStatusFilter;
 
   @override
   void initState() {
     super.initState();
+    _selectedSemester = TaskItem.getCurrentSemesterName();
     _initAndLoad();
   }
 
@@ -111,9 +113,31 @@ class _TasksScreenState extends State<TasksScreen> {
     }
   }
 
+  List<String> get _availableSemesters {
+    final currentSem = TaskItem.getCurrentSemesterName();
+    final semSet = <String>{currentSem};
+    for (final t in _tasks) {
+      semSet.add(t.resolvedSemester);
+    }
+    final sorted = semSet.toList()..sort(TaskItem.compareSemesters);
+    return [...sorted, 'Все'];
+  }
+
+  int _getTaskCountForSemester(String sem) {
+    if (sem == 'Все') return _tasks.length;
+    return _tasks.where((t) => t.resolvedSemester == sem).length;
+  }
+
+  List<TaskItem> get _semesterTasks {
+    if (_selectedSemester == 'Все') {
+      return _tasks;
+    }
+    return _tasks.where((t) => t.resolvedSemester == _selectedSemester).toList();
+  }
+
   List<String> get _subjects {
     final set = <String>{};
-    for (final t in _tasks) {
+    for (final t in _semesterTasks) {
       if (t.subject.isNotEmpty) {
         set.add(t.subject);
       }
@@ -123,7 +147,7 @@ class _TasksScreenState extends State<TasksScreen> {
   }
 
   List<TaskItem> get _filteredTasks {
-    return _tasks.where((t) {
+    return _semesterTasks.where((t) {
       if (_selectedSubject != 'Все' && t.subject != _selectedSubject) {
         return false;
       }
@@ -198,6 +222,7 @@ class _TasksScreenState extends State<TasksScreen> {
                 )
               : Column(
                   children: [
+                    _buildSemesterTabs(isDark),
                     _buildFiltersBar(isDark),
                     Expanded(
                       child: _filteredTasks.isEmpty
@@ -216,6 +241,119 @@ class _TasksScreenState extends State<TasksScreen> {
                     ),
                   ],
                 ),
+    );
+  }
+
+  Widget _buildSemesterTabs(bool isDark) {
+    final currentSem = TaskItem.getCurrentSemesterName();
+    final semesters = _availableSemesters;
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      decoration: BoxDecoration(
+        color: isDark ? const Color(0xFF1E293B) : Colors.white,
+        border: Border(
+          bottom: BorderSide(
+            color: isDark ? Colors.white12 : Colors.black.withValues(alpha: 0.06),
+          ),
+        ),
+      ),
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        child: Row(
+          children: semesters.map((sem) {
+            final isSelected = _selectedSemester == sem;
+            final isCurrent = sem == currentSem;
+            final count = _getTaskCountForSemester(sem);
+
+            return Padding(
+              padding: const EdgeInsets.only(right: 8),
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 180),
+                child: Material(
+                  color: Colors.transparent,
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(12),
+                    onTap: () {
+                      setState(() {
+                        _selectedSemester = sem;
+                        if (_selectedSubject != 'Все' && !_subjects.contains(_selectedSubject)) {
+                          _selectedSubject = 'Все';
+                        }
+                      });
+                    },
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+                      decoration: BoxDecoration(
+                        color: isSelected
+                            ? const Color(0xFF2563EB)
+                            : (isDark ? const Color(0xFF0F172A) : const Color(0xFFF1F5F9)),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: isSelected
+                              ? const Color(0xFF2563EB)
+                              : (isCurrent
+                                  ? const Color(0xFF3B82F6)
+                                  : (isDark ? Colors.white12 : Colors.black.withValues(alpha: 0.08))),
+                          width: isCurrent && !isSelected ? 1.5 : 1.0,
+                        ),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (isCurrent && !isSelected) ...[
+                            Container(
+                              width: 6,
+                              height: 6,
+                              margin: const EdgeInsets.only(right: 6),
+                              decoration: const BoxDecoration(
+                                color: Color(0xFF3B82F6),
+                                shape: BoxShape.circle,
+                              ),
+                            ),
+                          ],
+                          Text(
+                            sem,
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
+                              color: isSelected
+                                  ? Colors.white
+                                  : (isDark ? Colors.grey[200] : Colors.grey[800]),
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1.5),
+                            decoration: BoxDecoration(
+                              color: isSelected
+                                  ? Colors.white.withValues(alpha: 0.25)
+                                  : (isDark ? Colors.white12 : Colors.black.withValues(alpha: 0.07)),
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: Text(
+                              '$count',
+                              style: TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.bold,
+                                color: isSelected
+                                    ? Colors.white
+                                    : (isDark ? Colors.grey[300] : Colors.grey[700]),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            );
+          }).toList(),
+        ),
+      ),
     );
   }
 
@@ -238,29 +376,29 @@ class _TasksScreenState extends State<TasksScreen> {
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: Row(
               children: [
-                _buildStatusChip(null, 'Все (${_tasks.length})', isDark),
+                _buildStatusChip(null, 'Все (${_semesterTasks.length})', isDark),
                 const SizedBox(width: 8),
                 _buildStatusChip(
                   TaskStatus.todo,
-                  'Не начато (${_tasks.where((t) => t.currentStatus == TaskStatus.todo).length})',
+                  'Не начато (${_semesterTasks.where((t) => t.currentStatus == TaskStatus.todo).length})',
                   isDark,
                 ),
                 const SizedBox(width: 8),
                 _buildStatusChip(
                   TaskStatus.inProgress,
-                  'В процессе (${_tasks.where((t) => t.currentStatus == TaskStatus.inProgress).length})',
+                  'В процессе (${_semesterTasks.where((t) => t.currentStatus == TaskStatus.inProgress).length})',
                   isDark,
                 ),
                 const SizedBox(width: 8),
                 _buildStatusChip(
                   TaskStatus.submitted,
-                  'Сдано (${_tasks.where((t) => t.currentStatus == TaskStatus.submitted).length})',
+                  'Сдано (${_semesterTasks.where((t) => t.currentStatus == TaskStatus.submitted).length})',
                   isDark,
                 ),
                 const SizedBox(width: 8),
                 _buildStatusChip(
                   TaskStatus.accepted,
-                  'Зачтено (${_tasks.where((t) => t.currentStatus == TaskStatus.accepted).length})',
+                  'Зачтено (${_semesterTasks.where((t) => t.currentStatus == TaskStatus.accepted).length})',
                   isDark,
                 ),
               ],
@@ -381,13 +519,36 @@ class _TasksScreenState extends State<TasksScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Expanded(
-                    child: Text(
-                      task.subject,
-                      style: TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
-                        color: isDark ? const Color(0xFF93C5FD) : const Color(0xFF1E40AF),
-                      ),
+                    child: Wrap(
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      spacing: 6,
+                      runSpacing: 4,
+                      children: [
+                        Text(
+                          task.subject,
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                            color: isDark ? const Color(0xFF93C5FD) : const Color(0xFF1E40AF),
+                          ),
+                        ),
+                        if (_selectedSemester == 'Все')
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: isDark ? const Color(0xFF334155) : const Color(0xFFE2E8F0),
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: Text(
+                              task.resolvedSemester,
+                              style: TextStyle(
+                                fontSize: 10,
+                                fontWeight: FontWeight.w600,
+                                color: isDark ? const Color(0xFF94A3B8) : const Color(0xFF475569),
+                              ),
+                            ),
+                          ),
+                      ],
                     ),
                   ),
                   const SizedBox(width: 8),
@@ -513,6 +674,9 @@ class _TasksScreenState extends State<TasksScreen> {
     final descCtrl = TextEditingController();
     final deadlineCtrl = TextEditingController();
     String lessonType = 'Практика';
+    String selectedSemesterInDialog = _selectedSemester != 'Все'
+        ? _selectedSemester
+        : TaskItem.getCurrentSemesterName();
 
     showDialog(
       context: context,
@@ -531,6 +695,18 @@ class _TasksScreenState extends State<TasksScreen> {
                 TextField(
                   controller: titleCtrl,
                   decoration: const InputDecoration(labelText: 'Название / Тема *'),
+                ),
+                const SizedBox(height: 12),
+                DropdownButtonFormField<String>(
+                  initialValue: selectedSemesterInDialog,
+                  decoration: const InputDecoration(labelText: 'Семестр'),
+                  items: _availableSemesters
+                      .where((s) => s != 'Все')
+                      .map((s) => DropdownMenuItem(value: s, child: Text(s)))
+                      .toList(),
+                  onChanged: (val) {
+                    if (val != null) setDialogState(() => selectedSemesterInDialog = val);
+                  },
                 ),
                 const SizedBox(height: 12),
                 DropdownButtonFormField<String>(
@@ -575,6 +751,7 @@ class _TasksScreenState extends State<TasksScreen> {
                   subject: subjectCtrl.text.trim(),
                   title: titleCtrl.text.trim(),
                   lessonType: lessonType,
+                  semester: selectedSemesterInDialog,
                   deadline: deadlineCtrl.text.trim().isNotEmpty ? deadlineCtrl.text.trim() : null,
                   description: descCtrl.text.trim().isNotEmpty ? descCtrl.text.trim() : null,
                   createdBy: widget.studentId.toString(),
@@ -786,8 +963,36 @@ class _TaskDetailSheetState extends State<_TaskDetailSheet> {
                     widget.task.title,
                     style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
                   ),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF2563EB).withValues(alpha: 0.15),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text(
+                          widget.task.resolvedSemester,
+                          style: const TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                            color: Color(0xFF3B82F6),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        widget.task.lessonType,
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: isDark ? Colors.grey[400] : Colors.grey[600],
+                        ),
+                      ),
+                    ],
+                  ),
                   if (widget.task.lessonDate != null && widget.task.lessonDate!.isNotEmpty) ...[
-                    const SizedBox(height: 6),
+                    const SizedBox(height: 8),
                     Row(
                       children: [
                         Icon(Icons.calendar_today_outlined, size: 14, color: isDark ? Colors.grey[400] : Colors.grey[600]),

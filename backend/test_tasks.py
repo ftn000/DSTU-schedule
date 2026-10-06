@@ -101,6 +101,17 @@ class TestTasksModule(unittest.TestCase):
 
         tasks_after_sync = self.db.get_tasks("ВПР42", student_id="347338")
         self.assertEqual(len(tasks_after_sync), 2)
+        # Check semester field
+        self.assertEqual(tasks_after_sync[0]["semester"], "Осень 2026")
+        self.assertEqual(self.db.resolve_semester_name("2026-03-15"), "Весна 2026")
+        self.assertEqual(self.db.resolve_semester_name("2027-01-20"), "Осень 2026")
+        self.assertEqual(self.db.resolve_semester_name("2025-09-01"), "Осень 2025")
+
+        # Test filtering by semester
+        fall_tasks = self.db.get_tasks("ВПР42", semester="Осень 2026")
+        self.assertEqual(len(fall_tasks), 2)
+        spring_tasks = self.db.get_tasks("ВПР42", semester="Весна 2026")
+        self.assertEqual(len(spring_tasks), 0)
 
         # 6. Delete task
         deleted_files = self.db.delete_task(task_id)
