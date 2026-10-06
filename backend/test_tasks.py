@@ -121,5 +121,61 @@ class TestTasksModule(unittest.TestCase):
         tasks_final = self.db.get_tasks("ВПР42")
         self.assertEqual(len(tasks_final), 1)
 
+    def test_clean_subject_name_and_sync(self):
+        from database import clean_subject_name
+
+        self.assertEqual(clean_subject_name("Игровые стартапы (7 семестр)"), "Игровые стартапы")
+        self.assertEqual(clean_subject_name("Внедрение и маркетинг игр (7 семестр)"), "Внедрение и маркетинг игр")
+        self.assertEqual(clean_subject_name("Программирование мобильных игр (7 семестр, 26-27) V2"), "Программирование мобильных игр")
+        self.assertEqual(clean_subject_name("Менеджмент игрового проекта (7 семестр, 26-27) (v2)"), "Менеджмент игрового проекта")
+        self.assertEqual(clean_subject_name("Менеджмент игрового проекта (7 семестр)"), "Менеджмент игрового проекта")
+        self.assertEqual(clean_subject_name("Левел-дизайн ( 6 семестр)"), "Левел-дизайн")
+        self.assertEqual(clean_subject_name("Компьютерная графика (3D)"), "Компьютерная графика (3D)")
+        self.assertEqual(clean_subject_name("пр. Игровые стартапы (7 семестр)"), "Игровые стартапы")
+
+        # Test sync with dirty subject names
+        mock_schedule = [
+            {
+                "lessonType": "Практика",
+                "subject": "Программирование мобильных игр (7 семестр, 26-27) V2",
+                "theme": "Архитектура клиента",
+                "date": "2026-10-06T10:15:00",
+                "num": 2
+            },
+            {
+                "lessonType": "Практика",
+                "subject": "Внедрение и маркетинг игр (7 семестр)",
+                "theme": "Анализ рынка",
+                "date": "2026-10-06T12:00:00",
+                "num": 3
+            }
+        ]
+        created = self.db.sync_tasks_from_schedule("Т.РИ42", mock_schedule)
+        self.assertEqual(created, 2)
+
+        tasks = self.db.get_tasks("Т.РИ42")
+        subjects = [t["subject"] for t in tasks]
+        self.assertIn("Программирование мобильных игр", subjects)
+        self.assertIn("Внедрение и маркетинг игр", subjects)
+        self.assertNotIn("Программирование мобильных игр (7 семестр, 26-27) V2", subjects)
+        self.assertNotIn("Внедрение и маркетинг игр (7 семестр)", subjects)
+
+    def test_database_subject_migration(self):
+        # Insert a raw dirty task manually
+        with self.db._get_connection() as conn:
+            conn.execute("""
+                INSERT INTO tasks (group_name, subject, title, lesson_type, created_at, updated_at)
+                VALUES ('TEST', 'Игровые стартапы (7 семестр)', 'Практика: Игровые стартапы (7 семестр)', 'Практика', '2026-10-01', '2026-10-01')
+            """)
+            conn.commit()
+
+        # Re-initialize database to trigger migration
+        reloaded_db = Database(self.db_path)
+        tasks = reloaded_db.get_tasks("TEST")
+        self.assertEqual(len(tasks), 1)
+        self.assertEqual(tasks[0]["subject"], "Игровые стартапы")
+        self.assertEqual(tasks[0]["title"], "Практика: Игровые стартапы")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'lesson.dart';
 
 /// Модель прикрепленного файла (методичка к заданию или файл решения студента)
 class TaskFile {
@@ -241,7 +242,7 @@ class TaskItem {
     return TaskItem(
       id: json['id'] is int ? json['id'] : int.tryParse(json['id'].toString()) ?? 0,
       groupName: json['group_name']?.toString() ?? '',
-      subject: json['subject']?.toString() ?? '',
+      subject: Lesson.cleanSubjectName(json['subject']?.toString() ?? ''),
       title: json['title']?.toString() ?? '',
       lessonType: json['lesson_type']?.toString() ?? 'Практика',
       lessonNum: json['lesson_num'] != null ? int.tryParse(json['lesson_num'].toString()) : null,

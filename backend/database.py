@@ -6,8 +6,27 @@
 import sqlite3
 import json
 import hashlib
+import re
 from datetime import datetime, timedelta
 from typing import Optional, List, Dict, Any
+
+
+def clean_subject_name(name: Any) -> str:
+    """
+    Очищает название предмета от префиксов (лек, пр),
+    указателей семестра (например, '(7 семестр)', '( 6 семестр)', '(7 семестр, 26-27)')
+    и версий (например, 'V2', 'v2', '(v2)', '(версия 2)').
+    """
+    if not name:
+        return ""
+    s = str(name).strip()
+    s = re.sub(r'^(?:лек|пр|лаб|сем|зач|экз|конс|кп|кр)[\.\s]+', '', s, flags=re.IGNORECASE)
+    s = re.sub(r'\s*\(\s*[^)]*(?:семестр|сем\.?)[^)]*\)', '', s, flags=re.IGNORECASE)
+    s = re.sub(r'\s*\(\s*(?:[vVвВ]\s*\d+(?:\.\d+)*|версия\s*\d+)\s*\)', '', s, flags=re.IGNORECASE)
+    s = re.sub(r'(?:\s+|^)(?:[vVвВ]\s*\d+(?:\.\d+)*|версия\s*\d+)(?=\s|$|[),.;])', '', s, flags=re.IGNORECASE)
+    s = re.sub(r'\s*\(\s*[^)]*(?:семестр|сем\.?)[^)]*\)', '', s, flags=re.IGNORECASE)
+    s = re.sub(r'\s+', ' ', s).strip()
+    return s or str(name).strip()
 
 
 class Database:
@@ -160,6 +179,30 @@ class Database:
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_task_files_task ON task_files(task_id)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_task_files_submission ON task_files(submission_id)")
             
+            # Автоматическая миграция существующих записей с семестрами и V2
+            try:
+                cursor.execute("SELECT id, subject, title FROM tasks")
+                for r in cursor.fetchall():
+                    t_id = r["id"]
+                    old_s = r["subject"] or ""
+                    old_t = r["title"] or ""
+                    new_s = clean_subject_name(old_s)
+                    new_t = old_t
+                    if old_s and old_s in old_t:
+                        new_t = old_t.replace(old_s, new_s)
+                    if new_s != old_s or new_t != old_t:
+                        cursor.execute("UPDATE tasks SET subject = ?, title = ? WHERE id = ?", (new_s, new_t, t_id))
+
+                cursor.execute("SELECT id, subject FROM changes_history WHERE subject IS NOT NULL")
+                for r in cursor.fetchall():
+                    c_id = r["id"]
+                    old_s = r["subject"] or ""
+                    new_s = clean_subject_name(old_s)
+                    if new_s != old_s:
+                        cursor.execute("UPDATE changes_history SET subject = ? WHERE id = ?", (new_s, c_id))
+            except Exception:
+                pass
+
             conn.commit()
 
     @staticmethod
@@ -563,6 +606,7 @@ class Database:
     ) -> int:
         """Создает или обновляет задание для группы."""
         now = datetime.now().isoformat()
+        subject = clean_subject_name(subject)
         if not semester:
             semester = self.resolve_semester_name(lesson_date or deadline or now)
         with self._get_connection() as conn:
@@ -679,7 +723,10 @@ class Database:
         with self._get_connection() as conn:
             cursor = conn.cursor()
             for l in lessons:
-                subject = l.get("subject") or l.get("дисциплина") or ""
+                raw_subject = l.get("subject") or l.get("дисциплина") or ""
+                if not raw_subject:
+                    continue
+                subject = clean_subject_name(raw_subject)
                 if not subject:
                     continue
 
@@ -701,7 +748,7 @@ class Database:
 
                 l_type = l.get("lessonType") or l.get("тип") or ""
                 if not l_type:
-                    s_low = subject.lower()
+                    s_low = raw_subject.lower()
                     t_low = theme.lower()
                     color = (l.get("цвет") or l.get("color") or "").strip().lower()
 

@@ -247,9 +247,7 @@ class ApiService {
     
     // Вспомогательная нормализация названий предметов
     String normSubj(String s) {
-      final clean = s.trim().toLowerCase();
-      final typePrefixRegex = RegExp(r'^(?:лек|пр|лаб|сем|зач|экз|конс|кп|кр)[\.\s]+', caseSensitive: false);
-      return clean.replaceFirst(typePrefixRegex, '').trim();
+      return Lesson.cleanSubjectName(s).toLowerCase();
     }
 
     final cancelledLessonIds = <int>{};

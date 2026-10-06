@@ -12,6 +12,7 @@ import re
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass, asdict
 from datetime import datetime
+from database import clean_subject_name
 
 
 MONTHS_RU = {
@@ -60,12 +61,10 @@ def _clean_str(val: Any) -> str:
 
 
 def _normalize_subject(s: Any) -> str:
-    """Очищает название дисциплины от префиксов (лек, пр, лаб) для надёжного сравнения."""
+    """Очищает название дисциплины от префиксов (лек, пр, лаб), семестров и версий для надёжного сравнения."""
     if not s:
         return ""
-    val = str(s).strip()
-    val = re.sub(r'^(?:лек|пр|лаб|сем|зач|экз|конс|кп|кр)[\.\s]+', '', val, flags=re.IGNORECASE)
-    return val.strip().lower()
+    return clean_subject_name(s).lower()
 
 
 def _norm_room(val: Any) -> str:
@@ -222,7 +221,7 @@ def compare_schedules(
             old_teach_name = _clean_str(o.get("преподаватель") or o.get("фиоПреподавателя"))
             new_teach_name = _clean_str(n.get("преподаватель") or n.get("фиоПреподавателя"))
             date_fmt = _format_date(n.get("дата", ""))
-            subj = _clean_str(n.get("дисциплина"))
+            subj = clean_subject_name(n.get("дисциплина"))
 
             if o_room != n_room:
                 is_old_placeholder = old_aud.strip().lower() in ("аудитория", "", "не указана", "none")
@@ -310,7 +309,7 @@ def compare_schedules(
             old_teach_name = _clean_str(o.get("преподаватель") or o.get("фиоПреподавателя"))
             new_teach_name = _clean_str(n.get("преподаватель") or n.get("фиоПреподавателя"))
             date_fmt = _format_date(n.get("дата", ""))
-            subj = _clean_str(n.get("дисциплина"))
+            subj = clean_subject_name(n.get("дисциплина"))
 
             if o_room != n_room:
                 is_old_placeholder = old_aud.strip().lower() in ("аудитория", "", "не указана", "none")
@@ -380,7 +379,7 @@ def compare_schedules(
                 old_time_str = f"{o.get('начало')}-{o.get('конец')}"
                 new_time_str = f"{n.get('начало')}-{n.get('конец')}"
                 date_fmt = _format_date(n.get("дата", ""))
-                subj = _clean_str(n.get("дисциплина"))
+                subj = clean_subject_name(n.get("дисциплина"))
 
                 changes.append(ChangeItem(
                     type="TIME_CHANGED",
@@ -403,7 +402,7 @@ def compare_schedules(
         o_date = o.get("дата", "")[:10]
         date_fmt = _format_date(o.get("дата", ""))
         num = _norm_num(o)
-        subj = _clean_str(o.get("дисциплина"))
+        subj = clean_subject_name(o.get("дисциплина"))
         aud = _clean_str(o.get("аудитория"))
         msg = f"{date_fmt}, {num}-я пара ({subj}): пара отменена (была в ауд. {aud})"
 
@@ -427,7 +426,7 @@ def compare_schedules(
         n_date = n.get("дата", "")[:10]
         date_fmt = _format_date(n.get("дата", ""))
         num = _norm_num(n)
-        subj = _clean_str(n.get("дисциплина"))
+        subj = clean_subject_name(n.get("дисциплина"))
         new_aud = _clean_str(n.get("аудитория"))
         new_teacher = _clean_str(n.get("преподаватель") or n.get("фиоПреподавателя"))
         msg = f"{date_fmt}, {num}-я пара ({subj}): добавлена новая пара в ауд. {new_aud}"

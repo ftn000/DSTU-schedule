@@ -24,7 +24,7 @@ from aiogram.types import (
 )
 from aiogram.enums import ParseMode
 
-from database import Database
+from database import Database, clean_subject_name
 from fetcher import fetch_schedule
 from diff_engine import _format_date, extract_lessons, MONTHS_RU
 
@@ -248,7 +248,7 @@ def _format_day_schedule(lessons: List[Dict[str, Any]], title_date: str) -> str:
         time_start = l.get("начало", "")
         time_end = l.get("конец", "")
         time_str = f"{time_start} - {time_end}" if time_start else ""
-        subj = l.get("дисциплина", "Занятие").strip()
+        subj = clean_subject_name(l.get("дисциплина", "Занятие"))
         aud = l.get("аудитория", "").strip()
         teacher = (l.get("преподаватель") or l.get("фиоПреподавателя") or "").strip()
         type_lesson = _detect_lesson_type(l)
@@ -344,7 +344,7 @@ def _format_week_schedule(lessons: List[Dict[str, Any]], week_offset: int = 0) -
         lines = [f"<b>{day_title}</b>:"]
         for l in day_lessons_sorted:
             num = l.get("номерЗанятия", "?")
-            subj = l.get("дисциплина", "").strip()
+            subj = clean_subject_name(l.get("дисциплина", ""))
             aud = l.get("аудитория", "").strip()
             type_lesson = _detect_lesson_type(l)
             type_short = "лк" if "лек" in type_lesson.lower() else ("лаб" if "лаб" in type_lesson.lower() else "пр")
@@ -1378,7 +1378,7 @@ async def broadcast_schedule_changes(target_id: str, changes: List[Dict[str, Any
     for ch in changes:
         ch_type = ch.get("type", "")
         human_msg = ch.get("human_message") or ch.get("details", "")
-        subj = ch.get("subject", "Занятие")
+        subj = clean_subject_name(ch.get("subject", "Занятие"))
         num = ch.get("lesson_num", "")
         date_str = _format_date(ch.get("date", ""))
 

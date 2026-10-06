@@ -1,3 +1,5 @@
+import 'lesson.dart';
+
 class ScheduleChange {
   final int id;
   final String changeType; // CANCELLED, ROOM_CHANGED, TEACHER_CHANGED, ADDED, MODIFIED
@@ -30,7 +32,7 @@ class ScheduleChange {
       lessonId: json['lesson_id'] as int?,
       lessonDate: (json['lesson_date'] as String? ?? json['date'] as String? ?? '').split('T')[0],
       lessonNum: json['lesson_num'] as int? ?? 1,
-      subject: json['subject'] as String? ?? 'Занятие',
+      subject: Lesson.cleanSubjectName(json['subject'] as String? ?? 'Занятие'),
       details: json['details'] as String? ?? '',
       humanMessage: json['human_message'] as String? ?? '',
       detectedAt: json['detected_at'] as String? ?? DateTime.now().toIso8601String(),

@@ -52,9 +52,38 @@ class Lesson {
   });
 
   static final _typePrefixRegex = RegExp(
-    r'^(лек|пр|лаб|сем|зач|экз|конс|кп|кр)[\.\s]+(.*)', 
+    r'^(?:лек|пр|лаб|сем|зач|экз|конс|кп|кр)[\.\s]+', 
     caseSensitive: false
   );
+
+  static final _semesterSuffixRegex = RegExp(
+    r'\s*\(\s*[^)]*(?:семестр|сем\.?)[^)]*\)',
+    caseSensitive: false,
+  );
+
+  static final _versionInParensRegex = RegExp(
+    r'\s*\(\s*(?:[vVвВ]\s*\d+(?:\.\d+)*|версия\s*\d+)\s*\)',
+    caseSensitive: false,
+  );
+
+  static final _versionStandaloneRegex = RegExp(
+    r'(?:\s+|^)(?:[vVвВ]\s*\d+(?:\.\d+)*|версия\s*\d+)(?=\s|$|[),.;])',
+    caseSensitive: false,
+  );
+
+  /// Очищает название предмета от префиксов (лек, пр), семестров (напр. "(7 семестр)", "( 6 семестр)", "(7 семестр, 26-27)")
+  /// и версий (напр. "V2", "(v2)", "версия 2"), оставляя чистое наименование предмета.
+  static String cleanSubjectName(String raw) {
+    if (raw.isEmpty) return raw;
+    String s = raw.trim();
+    s = s.replaceFirst(_typePrefixRegex, '');
+    s = s.replaceAll(_semesterSuffixRegex, '');
+    s = s.replaceAll(_versionInParensRegex, '');
+    s = s.replaceAll(_versionStandaloneRegex, '');
+    s = s.replaceAll(_semesterSuffixRegex, ''); // повторно, если версия стояла перед семестром
+    s = s.replaceAll(RegExp(r'\s+'), ' ').trim();
+    return s.isNotEmpty ? s : raw.trim();
+  }
 
   static final _explicitLectureThemeRegex = RegExp(
     r'(?:^|[\s,.;:()])(лекция|лекц\.|лек\.)(?:$|[\s,.;:()0-9])|^тема\s*\d+',
@@ -198,12 +227,8 @@ class Lesson {
 
     final detectedType = detectLessonType(originalSubject, cleanTheme, color: rawColor);
 
-    // Очищаем название предмета от префиксов вроде "лек ", "пр "
-    String cleanSubject = originalSubject;
-    final match = _typePrefixRegex.firstMatch(originalSubject);
-    if (match != null) {
-      cleanSubject = match.group(2)!.trim();
-    }
+    // Очищаем название предмета от префиксов (лек, пр), семестров и версий (V2)
+    final cleanSubject = cleanSubjectName(originalSubject);
 
     return Lesson(
       id: json['код'] as int? ?? 0,

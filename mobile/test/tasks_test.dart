@@ -1,7 +1,73 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:dstu_schedule/models/task_item.dart';
+import 'package:dstu_schedule/models/lesson.dart';
 
 void main() {
+  group('Lesson cleanSubjectName Tests', () {
+    test('removes semesters and versions according to rules', () {
+      expect(
+        Lesson.cleanSubjectName('Игровые стартапы (7 семестр)'),
+        'Игровые стартапы',
+      );
+      expect(
+        Lesson.cleanSubjectName('Внедрение и маркетинг игр (7 семестр)'),
+        'Внедрение и маркетинг игр',
+      );
+      expect(
+        Lesson.cleanSubjectName('Программирование мобильных игр (7 семестр, 26-27) V2'),
+        'Программирование мобильных игр',
+      );
+      expect(
+        Lesson.cleanSubjectName('Менеджмент игрового проекта (7 семестр, 26-27) (v2)'),
+        'Менеджмент игрового проекта',
+      );
+      expect(
+        Lesson.cleanSubjectName('Менеджмент игрового проекта (7 семестр)'),
+        'Менеджмент игрового проекта',
+      );
+      expect(
+        Lesson.cleanSubjectName('Левел-дизайн ( 6 семестр)'),
+        'Левел-дизайн',
+      );
+      expect(
+        Lesson.cleanSubjectName('Компьютерная графика (3D)'),
+        'Компьютерная графика (3D)',
+      );
+      expect(
+        Lesson.cleanSubjectName('пр. Игровые стартапы (7 семестр)'),
+        'Игровые стартапы',
+      );
+    });
+
+    test('Lesson.fromJson automatically cleans subject', () {
+      final json = {
+        'код': 123,
+        'дисциплина': 'Программирование мобильных игр (7 семестр, 26-27) V2',
+        'номерЗанятия': 2,
+        'начало': '10:15',
+        'конец': '11:50',
+        'дата': '2026-10-06T00:00:00',
+        'деньНедели': 2,
+      };
+      final lesson = Lesson.fromJson(json);
+      expect(lesson.subject, 'Программирование мобильных игр');
+      expect(lesson.rawSubject, 'Программирование мобильных игр (7 семестр, 26-27) V2');
+    });
+
+    test('TaskItem.fromJson automatically cleans subject', () {
+      final json = {
+        'id': 5,
+        'group_name': 'Т.РИ42',
+        'subject': 'Менеджмент игрового проекта (7 семестр, 26-27) (v2)',
+        'title': 'Практика 1',
+        'created_at': '2026-10-06T00:00:00',
+        'updated_at': '2026-10-06T00:00:00',
+      };
+      final item = TaskItem.fromJson(json);
+      expect(item.subject, 'Менеджмент игрового проекта');
+    });
+  });
+
   group('TaskItem Semester Tests', () {
     test('formatSemesterFromDate correctly calculates autumn and spring', () {
       expect(TaskItem.formatSemesterFromDate(DateTime(2026, 9, 1)), 'Осень 2026');

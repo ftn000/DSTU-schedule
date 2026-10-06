@@ -748,7 +748,7 @@ class _TasksScreenState extends State<TasksScreen> {
                 final newTask = TaskItem(
                   id: 0,
                   groupName: _groupName,
-                  subject: subjectCtrl.text.trim(),
+                  subject: Lesson.cleanSubjectName(subjectCtrl.text.trim()),
                   title: titleCtrl.text.trim(),
                   lessonType: lessonType,
                   semester: selectedSemesterInDialog,
