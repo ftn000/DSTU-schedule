@@ -108,17 +108,6 @@ async def sync_target(target_id: str, student_id: int | str):
         date_uploading=fetch_res.upload_date
     )
 
-    # Синхронизируем практические занятия в модуль заданий
-    try:
-        group_name = _get_student_group_name(student_id, fetch_res.data)
-        lessons = extract_lessons(fetch_res.data)
-        new_tasks = db.sync_tasks_from_schedule(group_name, lessons)
-        if new_tasks > 0:
-            logger.info(f"Синхронизировано {new_tasks} новых заданий для {group_name}")
-            await broadcast_new_tasks(group_name, new_tasks)
-    except Exception as sync_e:
-        logger.warning(f"Ошибка синхронизации заданий для {target_id}: {sync_e}")
-
     logger.info(f"Синхронизация {target_id} успешно завершена")
 
 
@@ -956,9 +945,8 @@ async def delete_task_file(file_id: int):
 
 @app.post("/api/tasks/sync-schedule")
 async def sync_tasks_from_schedule(req: TaskSyncScheduleRequest):
-    """Синхронизирует и создает задания из расписания группы (практики/лабораторные)."""
-    created = db.sync_tasks_from_schedule(req.group_name, req.lessons)
-    return {"success": True, "created_count": created}
+    """Синхронизирует и создает задания из расписания группы (практики/лабораторные). Отключено."""
+    return {"success": True, "created_count": 0}
 
 
 

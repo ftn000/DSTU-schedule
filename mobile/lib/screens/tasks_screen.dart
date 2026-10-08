@@ -79,36 +79,43 @@ class _TasksScreenState extends State<TasksScreen> {
     }
   }
 
-  Future<void> _syncSchedule() async {
-    setState(() => _isLoading = true);
-    try {
-      List<Lesson> lessons = widget.currentScheduleLessons ?? [];
-      if (lessons.isEmpty) {
-        final res = await _apiService.getSchedule(widget.studentId);
-        lessons = res.lessons;
-      }
-
-      final createdCount = await _tasksService.syncScheduleTasks(_groupName, lessons);
-      await _loadTasks(forceRefresh: true);
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              createdCount > 0
-                  ? 'Синхронизировано: добавлено новых заданий — $createdCount'
-                  : 'Все практики и лабораторные уже синхронизированы',
-            ),
-            backgroundColor: createdCount > 0 ? const Color(0xFF1E40AF) : Colors.grey[800],
+  Future<void> _confirmDeleteTask(TaskItem task) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Удалить задание?'),
+        content: Text(
+          'Вы действительно хотите удалить «${task.title}»?\nВсе прикрепленные файлы и решения также будут удалены.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Отмена'),
           ),
-        );
-      }
-    } catch (e) {
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Удалить', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true) {
+      setState(() => _isLoading = true);
+      final success = await _tasksService.deleteTask(task.id);
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Ошибка синхронизации: $e'), backgroundColor: Colors.red),
-        );
-        setState(() => _isLoading = false);
+        if (success) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Задание успешно удалено')),
+          );
+          await _loadTasks(forceRefresh: true);
+        } else {
+          setState(() => _isLoading = false);
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Не удалось удалить задание'), backgroundColor: Colors.red),
+          );
+        }
       }
     }
   }
@@ -182,11 +189,6 @@ class _TasksScreenState extends State<TasksScreen> {
           ],
         ),
         actions: [
-          IconButton(
-            tooltip: 'Синхронизировать с расписанием',
-            icon: const Icon(Icons.sync),
-            onPressed: _syncSchedule,
-          ),
           IconButton(
             tooltip: 'Обновить',
             icon: const Icon(Icons.refresh),
@@ -472,19 +474,11 @@ class _TasksScreenState extends State<TasksScreen> {
             const SizedBox(height: 8),
             Text(
               _tasks.isEmpty
-                  ? 'Вы можете синхронизировать практики из расписания или добавить задание вручную.'
+                  ? 'Нажмите кнопку «+ Задание», чтобы добавить практику или лабораторную работу.'
                   : 'Попробуйте сбросить фильтры поиска.',
               textAlign: TextAlign.center,
               style: TextStyle(fontSize: 13, color: isDark ? Colors.grey[400] : Colors.grey[600]),
             ),
-            if (_tasks.isEmpty) ...[
-              const SizedBox(height: 20),
-              ElevatedButton.icon(
-                onPressed: _syncSchedule,
-                icon: const Icon(Icons.sync),
-                label: const Text('Синхронизировать из расписания'),
-              ),
-            ],
           ],
         ),
       ),
@@ -581,6 +575,15 @@ class _TasksScreenState extends State<TasksScreen> {
                         ),
                       ],
                     ),
+                  ),
+                  const SizedBox(width: 4),
+                  IconButton(
+                    icon: const Icon(Icons.delete_outline, size: 20, color: Colors.redAccent),
+                    tooltip: 'Удалить задание',
+                    visualDensity: VisualDensity.compact,
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(),
+                    onPressed: () => _confirmDeleteTask(task),
                   ),
                 ],
               ),
@@ -919,6 +922,46 @@ class _TaskDetailSheetState extends State<_TaskDetailSheet> {
     }
   }
 
+  Future<void> _confirmDeleteTask() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Удалить задание?'),
+        content: Text(
+          'Вы действительно хотите удалить «${widget.task.title}»?\nВсе прикрепленные файлы и решения также будут удалены.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Отмена'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Удалить', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true) {
+      final success = await _tasksService.deleteTask(widget.task.id);
+      if (mounted) {
+        if (success) {
+          Navigator.pop(context);
+          widget.onUpdated();
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Задание успешно удалено')),
+          );
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Не удалось удалить задание'), backgroundColor: Colors.red),
+          );
+        }
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
@@ -950,13 +993,25 @@ class _TaskDetailSheetState extends State<_TaskDetailSheet> {
                 padding: const EdgeInsets.fromLTRB(20, 0, 20, 32),
                 children: [
                   // Заголовок
-                  Text(
-                    widget.task.subject,
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                      color: isDark ? const Color(0xFF93C5FD) : const Color(0xFF1E40AF),
-                    ),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Expanded(
+                        child: Text(
+                          widget.task.subject,
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                            color: isDark ? const Color(0xFF93C5FD) : const Color(0xFF1E40AF),
+                          ),
+                        ),
+                      ),
+                      IconButton(
+                        tooltip: 'Удалить задание',
+                        icon: const Icon(Icons.delete_outline, color: Colors.redAccent),
+                        onPressed: _confirmDeleteTask,
+                      ),
+                    ],
                   ),
                   const SizedBox(height: 4),
                   Text(
@@ -1127,6 +1182,16 @@ class _TaskDetailSheetState extends State<_TaskDetailSheet> {
                       ),
                     ),
                   ],
+                  const SizedBox(height: 28),
+                  OutlinedButton.icon(
+                    onPressed: _confirmDeleteTask,
+                    icon: const Icon(Icons.delete_outline, color: Colors.red),
+                    label: const Text('Удалить задание', style: TextStyle(color: Colors.red)),
+                    style: OutlinedButton.styleFrom(
+                      side: const BorderSide(color: Colors.red),
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                    ),
+                  ),
                 ],
               ),
             ),

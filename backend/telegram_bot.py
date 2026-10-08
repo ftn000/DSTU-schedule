@@ -900,13 +900,12 @@ async def handle_tasks_list(message: types.Message):
 
     if not tasks:
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🔄 Синхронизировать с расписанием", callback_data="sync_tasks")],
             [InlineKeyboardButton(text="📲 Открыть в приложении", url=f"{APP_REDIRECT_URL}?student_id={student_id}")],
         ])
         await message.answer(
             f"📝 <b>Задания и практики ({group_name}):</b>\n\n"
             f"🎉 <i>Для вашей группы пока нет добавленных заданий.</i>\n\n"
-            f"Нажмите кнопку ниже, чтобы автоматически создать практики из расписания ДГТУ!",
+            f"Вы можете добавить задания и прикрепить методички в мобильном приложении!",
             parse_mode=ParseMode.HTML,
             reply_markup=keyboard,
         )
@@ -965,10 +964,7 @@ async def handle_tasks_list(message: types.Message):
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📲 Открыть в приложении", url=f"{APP_REDIRECT_URL}?student_id={student_id}")],
-        [
-            InlineKeyboardButton(text="⏰ Горящие дедлайны", callback_data="view_deadlines"),
-            InlineKeyboardButton(text="🔄 Синхронизировать", callback_data="sync_tasks"),
-        ],
+        [InlineKeyboardButton(text="⏰ Горящие дедлайны", callback_data="view_deadlines")],
     ])
 
     body_text = "\n".join(lines[:2]) + "\n" + "\n\n".join(lines[2:])
@@ -1017,7 +1013,6 @@ def _build_deadlines_content(
         )
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="📲 Открыть в приложении", url=f"{APP_REDIRECT_URL}?student_id={student_id}")],
-            [InlineKeyboardButton(text="🔄 Синхронизировать практики", callback_data="sync_tasks")],
         ])
         return text, keyboard, False
 
@@ -1097,10 +1092,7 @@ def _build_deadlines_content(
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📲 Открыть в приложении", url=f"{APP_REDIRECT_URL}?student_id={student_id}")],
-        [
-            InlineKeyboardButton(text="📝 Все задания", callback_data="view_tasks"),
-            InlineKeyboardButton(text="🔄 Синхронизировать", callback_data="sync_tasks"),
-        ],
+        [InlineKeyboardButton(text="📝 Все задания", callback_data="view_tasks")],
     ])
 
     return "\n".join(lines).strip(), keyboard, has_urgent
@@ -1157,33 +1149,7 @@ async def handle_callback_view_tasks(call: types.CallbackQuery):
 
 @dp.callback_query(F.data == "sync_tasks")
 async def handle_callback_sync_tasks(call: types.CallbackQuery):
-    if _db is None or not call.message:
-        return
-    sub = _db.get_telegram_subscriber(call.message.chat.id)
-    if not sub:
-        await call.answer("ID студента не привязан")
-        return
-
-    student_id = sub["student_id"]
-    cached = _db.get_schedule(f"student_{student_id}")
-    schedule_data = cached["data"] if cached else None
-    if not schedule_data:
-        res = fetch_schedule(student_id)
-        if res.success and res.data:
-            schedule_data = res.data
-            _db.save_schedule(f"student_{student_id}", "student", res.raw_text, _db.calculate_hash(res.data), res.date_uploading)
-
-    if not schedule_data:
-        await call.answer("Не удалось загрузить расписание ДГТУ", show_alert=True)
-        return
-
-    group_name = _get_student_group_name(student_id, schedule_data)
-    lessons = extract_lessons(schedule_data)
-    created = _db.sync_tasks_from_schedule(group_name, lessons)
-
-    await call.answer(f"Синхронизировано! Добавлено новых заданий: {created}", show_alert=True)
-    if isinstance(call.message, types.Message):
-        await handle_tasks_list(call.message)
+    await call.answer("Автоматическая синхронизация практик из расписания отключена", show_alert=True)
 
 
 @dp.message(F.text.in_(["ℹ️ Информация", "⚙️ Параметры", "⚙️ Моя подписка", "Информация", "/info"]))
