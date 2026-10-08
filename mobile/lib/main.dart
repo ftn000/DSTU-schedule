@@ -10,11 +10,25 @@ void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   
   // Инициализация системных уведомлений и фонового воркера WorkManager
-  await NotificationService().initialize();
-  await BackgroundService.initialize();
+  try {
+    await NotificationService().initialize();
+  } catch (e) {
+    debugPrint('NotificationService init error: $e');
+  }
+
+  try {
+    await BackgroundService.initialize();
+  } catch (e) {
+    debugPrint('BackgroundService init error: $e');
+  }
 
   final apiService = ApiService();
-  final savedId = await apiService.getSavedStudentId();
+  int? savedId;
+  try {
+    savedId = await apiService.getSavedStudentId();
+  } catch (e) {
+    debugPrint('getSavedStudentId error: $e');
+  }
 
   runApp(DstuScheduleApp(initialStudentId: savedId));
 }

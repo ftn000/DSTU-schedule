@@ -1,4 +1,5 @@
 import 'dart:ui';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:workmanager/workmanager.dart';
@@ -52,6 +53,13 @@ void callbackDispatcher() {
 
 class BackgroundService {
   static Future<void> initialize() async {
+    // Workmanager поддерживается только на Android и iOS (фоновые сервисы мобильных ОС)
+    if (kIsWeb ||
+        (defaultTargetPlatform != TargetPlatform.android &&
+            defaultTargetPlatform != TargetPlatform.iOS)) {
+      return;
+    }
+
     try {
       await Workmanager().initialize(callbackDispatcher);
 

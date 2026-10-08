@@ -26,47 +26,61 @@ class NotificationService {
       requestBadgePermission: false,
       requestSoundPermission: false,
     );
+    const windowsSettings = WindowsInitializationSettings(
+      appName: 'ДГТУ Расписание',
+      appUserModelId: 'ru.dstu.schedule',
+      guid: '6a3c6130-9b64-4bf8-b21a-7b3b75cb4507',
+    );
 
     const initSettings = InitializationSettings(
       android: androidSettings,
       iOS: darwinSettings,
+      windows: windowsSettings,
     );
 
-    await _notificationsPlugin.initialize(
-      settings: initSettings,
-      onDidReceiveNotificationResponse: (NotificationResponse response) {
-        debugPrint('Notification clicked with payload: ${response.payload}');
-      },
-    );
+    try {
+      await _notificationsPlugin.initialize(
+        settings: initSettings,
+        onDidReceiveNotificationResponse: (NotificationResponse response) {
+          debugPrint('Notification clicked with payload: ${response.payload}');
+        },
+      );
 
-    // Создаем канал уведомлений с высоким приоритетом на Android
-    const androidChannel = AndroidNotificationChannel(
-      channelId,
-      channelName,
-      description: channelDescription,
-      importance: Importance.max,
-      playSound: true,
-      enableVibration: true,
-    );
+      // Создаем канал уведомлений с высоким приоритетом на Android
+      const androidChannel = AndroidNotificationChannel(
+        channelId,
+        channelName,
+        description: channelDescription,
+        importance: Importance.max,
+        playSound: true,
+        enableVibration: true,
+      );
 
-    final androidPlugin = _notificationsPlugin.resolvePlatformSpecificImplementation<
-        AndroidFlutterLocalNotificationsPlugin>();
+      final androidPlugin = _notificationsPlugin.resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin>();
 
-    if (androidPlugin != null) {
-      await androidPlugin.createNotificationChannel(androidChannel);
-      // Запрашиваем разрешение на отправку уведомлений на Android 13+
-      await androidPlugin.requestNotificationsPermission();
+      if (androidPlugin != null) {
+        await androidPlugin.createNotificationChannel(androidChannel);
+        // Запрашиваем разрешение на отправку уведомлений на Android 13+
+        await androidPlugin.requestNotificationsPermission();
+      }
+    } catch (e) {
+      debugPrint('NotificationService initialize warning: $e');
     }
 
     _isInitialized = true;
   }
 
   Future<bool> requestPermissions() async {
-    final androidPlugin = _notificationsPlugin.resolvePlatformSpecificImplementation<
-        AndroidFlutterLocalNotificationsPlugin>();
-    if (androidPlugin != null) {
-      final granted = await androidPlugin.requestNotificationsPermission();
-      return granted ?? false;
+    try {
+      final androidPlugin = _notificationsPlugin.resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin>();
+      if (androidPlugin != null) {
+        final granted = await androidPlugin.requestNotificationsPermission();
+        return granted ?? false;
+      }
+    } catch (e) {
+      debugPrint('requestPermissions warning: $e');
     }
     return true;
   }
@@ -98,15 +112,20 @@ class NotificationService {
         presentBadge: true,
         presentSound: true,
       ),
+      windows: const WindowsNotificationDetails(),
     );
 
-    await _notificationsPlugin.show(
-      id: id,
-      title: title,
-      body: body,
-      notificationDetails: details,
-      payload: payload,
-    );
+    try {
+      await _notificationsPlugin.show(
+        id: id,
+        title: title,
+        body: body,
+        notificationDetails: details,
+        payload: payload,
+      );
+    } catch (e) {
+      debugPrint('showNotification warning: $e');
+    }
   }
 
   Future<void> showScheduleChangeNotification(ScheduleChange change) async {
