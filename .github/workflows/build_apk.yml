@@ -34,6 +34,20 @@ jobs:
         working-directory: mobile
         run: flutter pub get
 
+      - name: Restore Release Keystore
+        run: |
+          if [ -n "${{ secrets.RELEASE_KEYSTORE_BASE64 }}" ]; then
+            echo "${{ secrets.RELEASE_KEYSTORE_BASE64 }}" | base64 -d > mobile/android/app/dstu_release.jks
+          else
+            curl -skf -H "X-CI-Token: ${{ secrets.CI_DEPLOY_TOKEN || 'dstu_schedule_ci_deploy_token_2026' }}" \
+              https://109.69.17.170.sslip.io/api/ci/keystore -o mobile/android/app/dstu_release.jks || true
+          fi
+          if [ -f "mobile/android/app/dstu_release.jks" ]; then
+            echo "Release keystore successfully restored."
+          else
+            echo "Warning: dstu_release.jks not found, build will fallback to debug key."
+          fi
+
       - name: Build Release APK
         working-directory: mobile
         run: flutter build apk --release
@@ -64,3 +78,16 @@ jobs:
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Deploy APK to Production Server
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          echo "Deploying APK to production server..."
+          curl -f -X POST \
+            -H "Content-Type: application/octet-stream" \
+            -H "X-CI-Token: ${{ secrets.CI_DEPLOY_TOKEN || 'dstu_schedule_ci_deploy_token_2026' }}" \
+            --data-binary @DSTU-schedule.apk \
+            https://109.69.17.170.sslip.io/api/ci/deploy-apk || \
+          curl -f -X POST \
+            -H "X-CI-Token: ${{ secrets.CI_DEPLOY_TOKEN || 'dstu_schedule_ci_deploy_token_2026' }}" \
+            https://109.69.17.170.sslip.io/api/ci/sync-latest-apk

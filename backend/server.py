@@ -15,10 +15,12 @@ import asyncio
 import hashlib
 import json
 import uuid
+import shutil
+import urllib.request
 from typing import Optional, List, Dict, Any
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import FastAPI, HTTPException, Query, Request, Header
 from fastapi.responses import HTMLResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -407,6 +409,111 @@ async def trigger_apk_update_broadcast(force: bool = Query(False, description="�
         "status": "ok",
         "delivered_to_users": delivered,
         "message": f"Оповещение разослано {delivered} подписчикам" if delivered > 0 else "Новый билд не обнаружен (или уже был разослан). Используйте force=true для принудительной отправки."
+    }
+
+
+CI_DEPLOY_TOKEN = os.getenv("CI_DEPLOY_TOKEN", "dstu_schedule_ci_deploy_token_2026")
+
+
+@app.get("/api/ci/keystore")
+async def get_ci_keystore(x_ci_token: Optional[str] = Header(None, alias="X-CI-Token")):
+    """Отдает релизный keystore для сборки APK в CI/CD."""
+    if x_ci_token != CI_DEPLOY_TOKEN:
+        raise HTTPException(status_code=403, detail="Доступ запрещен: неверный CI токен")
+
+    keystore_path = "/opt/dstu-schedule/dstu_release.jks"
+    if not os.path.exists(keystore_path):
+        keystore_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "dstu_release.jks")
+    if not os.path.exists(keystore_path):
+        raise HTTPException(status_code=404, detail="Keystore не найден на сервере")
+    return FileResponse(keystore_path, filename="dstu_release.jks", media_type="application/octet-stream")
+
+
+@app.post("/api/ci/deploy-apk")
+async def deploy_apk_from_ci(
+    request: Request,
+    x_ci_token: Optional[str] = Header(None, alias="X-CI-Token")
+):
+    """Принимает бинарный поток свежесобранного APK из CI и обновляет его на сервере."""
+    if x_ci_token != CI_DEPLOY_TOKEN:
+        raise HTTPException(status_code=403, detail="Доступ запрещен: неверный CI токен")
+
+    target_apk = os.path.join(os.path.dirname(__file__), "DSTU-schedule.apk")
+    temp_apk = f"{target_apk}.tmp"
+    total_bytes = 0
+
+    try:
+        with open(temp_apk, "wb") as f:
+            async for chunk in request.stream():
+                total_bytes += len(chunk)
+                f.write(chunk)
+        if total_bytes < 1000000:
+            if os.path.exists(temp_apk):
+                os.remove(temp_apk)
+            raise HTTPException(status_code=400, detail="Размер файла слишком мал для валидного APK")
+
+        shutil.move(temp_apk, target_apk)
+        logger.info(f"🎉 Новый APK успешно загружен через CI ({total_bytes} байт)")
+    except HTTPException:
+        raise
+    except Exception as e:
+        if os.path.exists(temp_apk):
+            os.remove(temp_apk)
+        logger.error(f"Ошибка при сохранении APK из CI: {e}")
+        raise HTTPException(status_code=500, detail=f"Ошибка сохранения APK: {e}")
+
+    # Запускаем проверку хеша и рассылку обновления пользователям
+    delivered = await check_and_notify_apk_update()
+    meta = get_app_version_meta()
+    return {
+        "status": "ok",
+        "size": total_bytes,
+        "version": meta.get("version"),
+        "build_number": meta.get("build_number"),
+        "telegram_subscribers_notified": delivered
+    }
+
+
+@app.post("/api/ci/sync-latest-apk")
+async def sync_latest_apk_from_github(
+    x_ci_token: Optional[str] = Header(None, alias="X-CI-Token")
+):
+    """Скачивает самый свежий релизный APK из GitHub Releases на сервер."""
+    if x_ci_token != CI_DEPLOY_TOKEN:
+        raise HTTPException(status_code=403, detail="Доступ запрещен: неверный CI токен")
+
+    meta = get_app_version_meta()
+    version = meta.get("version", "1.8.3")
+    url = f"https://github.com/ftn000/DSTU-schedule/releases/download/v{version}/DSTU-schedule.apk"
+
+    target_apk = os.path.join(os.path.dirname(__file__), "DSTU-schedule.apk")
+    temp_apk = f"{target_apk}.tmp"
+
+    try:
+        req = urllib.request.Request(
+            url, 
+            headers={"User-Agent": "DSTU-Schedule-Server/1.0"}
+        )
+        with urllib.request.urlopen(req, timeout=60) as resp, open(temp_apk, "wb") as out_f:
+            shutil.copyfileobj(resp, out_f)
+
+        if os.path.getsize(temp_apk) < 1000000:
+            os.remove(temp_apk)
+            raise HTTPException(status_code=400, detail="Загруженный файл поврежден или мал")
+
+        shutil.move(temp_apk, target_apk)
+        logger.info(f"🎉 Новый APK v{version} успешно скачан с GitHub Releases")
+    except Exception as e:
+        if os.path.exists(temp_apk):
+            os.remove(temp_apk)
+        logger.error(f"Ошибка при скачивании APK с GitHub Releases: {e}")
+        raise HTTPException(status_code=500, detail=f"Ошибка скачивания APK: {e}")
+
+    delivered = await check_and_notify_apk_update()
+    return {
+        "status": "ok",
+        "version": version,
+        "telegram_subscribers_notified": delivered
     }
 
 

@@ -1,7 +1,7 @@
 name: dstu_schedule
 description: "Мобильное приложение расписания ДГТУ с офлайн-кэшем и отслеживанием изменений"
 publish_to: 'none'
-version: 1.8.2+23
+version: 1.8.3+24
 
 environment:
   sdk: '>=3.0.0 <4.0.0'

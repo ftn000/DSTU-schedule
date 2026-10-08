@@ -39,10 +39,10 @@ void main() {
       );
     });
 
-    test('Lesson.fromJson automatically cleans subject', () {
+    test('Lesson.fromJson automatically cleans subject and parses prefix without RangeError', () {
       final json = {
         'код': 123,
-        'дисциплина': 'Программирование мобильных игр (7 семестр, 26-27) V2',
+        'дисциплина': 'пр. Программирование мобильных игр (7 семестр, 26-27) V2',
         'номерЗанятия': 2,
         'начало': '10:15',
         'конец': '11:50',
@@ -51,7 +51,21 @@ void main() {
       };
       final lesson = Lesson.fromJson(json);
       expect(lesson.subject, 'Программирование мобильных игр');
-      expect(lesson.rawSubject, 'Программирование мобильных игр (7 семестр, 26-27) V2');
+      expect(lesson.rawSubject, 'пр. Программирование мобильных игр (7 семестр, 26-27) V2');
+      expect(lesson.lessonType, 'Практика');
+
+      final jsonLec = {
+        'код': 124,
+        'дисциплина': 'лек. Компьютерная графика',
+        'номерЗанятия': 1,
+        'начало': '08:30',
+        'конец': '10:05',
+        'дата': '2026-10-06T00:00:00',
+        'деньНедели': 2,
+      };
+      final lessonLec = Lesson.fromJson(jsonLec);
+      expect(lessonLec.subject, 'Компьютерная графика');
+      expect(lessonLec.lessonType, 'Лекция');
     });
 
     test('TaskItem.fromJson automatically cleans subject', () {

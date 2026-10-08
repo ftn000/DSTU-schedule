@@ -52,8 +52,8 @@ class Lesson {
   });
 
   static final _typePrefixRegex = RegExp(
-    r'^(?:лек|пр|лаб|сем|зач|экз|конс|кп|кр)[\.\s]+', 
-    caseSensitive: false
+    r'^(лек|пр|лаб|сем|зач|экз|конс|кп|кр)[\.\s]+', 
+    caseSensitive: false,
   );
 
   static final _semesterSuffixRegex = RegExp(
@@ -135,7 +135,7 @@ class Lesson {
 
     // 1. Проверяем явный префикс в самом названии предмета (лек, пр, лаб и т.д.)
     final match = _typePrefixRegex.firstMatch(s);
-    if (match != null) {
+    if (match != null && match.groupCount >= 1) {
       final prefix = match.group(1)!.toLowerCase();
       switch (prefix) {
         case 'лек': return 'Лекция';
