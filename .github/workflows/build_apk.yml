@@ -40,7 +40,7 @@ jobs:
             echo "${{ secrets.RELEASE_KEYSTORE_BASE64 }}" | base64 -d > mobile/android/app/dstu_release.jks
           else
             curl -skf -H "X-CI-Token: ${{ secrets.CI_DEPLOY_TOKEN || 'dstu_schedule_ci_deploy_token_2026' }}" \
-              https://109.69.17.170.sslip.io/api/ci/keystore -o mobile/android/app/dstu_release.jks || true
+              http://195.93.244.96/api/ci/keystore -o mobile/android/app/dstu_release.jks || true
           fi
           if [ -f "mobile/android/app/dstu_release.jks" ]; then
             echo "Release keystore successfully restored."
@@ -87,7 +87,7 @@ jobs:
             -H "Content-Type: application/octet-stream" \
             -H "X-CI-Token: ${{ secrets.CI_DEPLOY_TOKEN || 'dstu_schedule_ci_deploy_token_2026' }}" \
             --data-binary @DSTU-schedule.apk \
-            https://109.69.17.170.sslip.io/api/ci/deploy-apk || \
+            http://195.93.244.96/api/ci/deploy-apk || \
           curl -f -X POST \
             -H "X-CI-Token: ${{ secrets.CI_DEPLOY_TOKEN || 'dstu_schedule_ci_deploy_token_2026' }}" \
-            https://109.69.17.170.sslip.io/api/ci/sync-latest-apk
+            http://195.93.244.96/api/ci/sync-latest-apk

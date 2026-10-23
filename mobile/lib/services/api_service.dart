@@ -26,7 +26,7 @@ class ApiService {
 
   static const String baseUrl = String.fromEnvironment(
     'API_URL',
-    defaultValue: 'http://109.69.17.170',
+    defaultValue: 'http://195.93.244.96',
   );
 
   static const String _savedIdKey = 'saved_student_id';

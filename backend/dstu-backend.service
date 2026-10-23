@@ -7,6 +7,7 @@ Type=simple
 User=root
 WorkingDirectory=/opt/dstu-schedule/backend
 Environment="PYTHONUNBUFFERED=1"
+EnvironmentFile=-/opt/dstu-schedule/backend/.env
 ExecStart=/opt/dstu-schedule/backend/venv/bin/uvicorn server:app --host 0.0.0.0 --port 8000
 Restart=always
 RestartSec=5
